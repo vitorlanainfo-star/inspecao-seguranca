@@ -1,0 +1,3182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inspeção de Condições Inseguras - Laticínios Porto Alegre</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, set, onValue, remove, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDDli2nrl08g8dCxawIV5LVEzBet-RTR-Q",
+            authDomain: "inspecaoseguranca-fe2c4.firebaseapp.com",
+            databaseURL: "https://inspecaoseguranca-fe2c4-default-rtdb.firebaseio.com",
+            projectId: "inspecaoseguranca-fe2c4",
+            storageBucket: "inspecaoseguranca-fe2c4.appspot.com",
+            messagingSenderId: "213689148569",
+            appId: "1:213689148569:web:f7614aaa0a63fdf6df8408"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        const connectedRef = ref(db, ".info/connected");
+        onValue(connectedRef, (snap) => {
+            const indicator = document.getElementById('firebaseStatusIndicator');
+            const textIndicator = document.getElementById('firebaseStatusText');
+            if (indicator && textIndicator) {
+                if (snap.val() === true) {
+                    indicator.style.backgroundColor = '#10b981';
+                    textIndicator.innerText = 'Banco de Dados Conectado';
+                } else {
+                    indicator.style.backgroundColor = '#f59e0b';
+                    textIndicator.innerText = 'Conectando ao Banco...';
+                }
+            }
+        });
+
+        window.fbSalvarOcorrencia = function(item) {
+            set(ref(db, 'ocorrencias/' + item.id), item);
+        };
+
+        window.fbExcluirOcorrencia = function(id) {
+            remove(ref(db, 'ocorrencias/' + id));
+        };
+
+        window.fbSalvarGestores = function(gestores) {
+            set(ref(db, 'config/gestores'), gestores);
+        };
+
+        window.fbSalvarSetores = function(setores) {
+            set(ref(db, 'config/setores'), setores);
+        };
+
+        window.fbGerarProximoTicket = async function(callback) {
+            const counterRef = ref(db, 'config/contadorProtocolo');
+            try {
+                let novoNum = 1;
+                await runTransaction(counterRef, (currentVal) => {
+                    if (currentVal === null) {
+                        novoNum = 1;
+                    } else {
+                        novoNum = currentVal + 1;
+                    }
+                    return novoNum;
+                });
+                if (callback) callback('P' + novoNum);
+            } catch (error) {
+                console.error("Erro ao gerar protocolo único:", error);
+                if (callback) callback('P' + Date.now().toString().slice(-4));
+            }
+        };
+
+        let renderFirebaseTimer = null;
+        function agendarRenderFirebase() {
+            clearTimeout(renderFirebaseTimer);
+            renderFirebaseTimer = setTimeout(() => {
+                if (typeof renderizarTelas === 'function') renderizarTelas();
+            }, 120);
+        }
+
+        function salvarCacheOcorrenciasLeve(lista) {
+            try {
+                const leve = lista.map(item => {
+                    const copia = { ...item };
+                    delete copia.foto;
+                    delete copia.fotoConclusao;
+                    return copia;
+                });
+                localStorage.setItem('cache_ocorrencias', JSON.stringify(leve));
+            } catch (e) {
+                console.warn('Cache local de ocorrências não pôde ser salvo:', e);
+            }
+        }
+
+        onValue(ref(db, 'ocorrencias'), (snapshot) => {
+            const data = snapshot.val();
+            ocorrencias = data ? Object.values(data) : [];
+            ocorrencias.sort((a, b) => b.id - a.id);
+            if (data) salvarCacheOcorrenciasLeve(ocorrencias);
+            else localStorage.removeItem('cache_ocorrencias');
+            agendarRenderFirebase();
+        });
+
+        onValue(ref(db, 'config/gestores'), (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                listaGestores = Object.values(data);
+                localStorage.setItem('cache_gestores', JSON.stringify(listaGestores));
+            } else {
+                listaGestores = [];
+            }
+            agendarRenderFirebase();
+        });
+
+        onValue(ref(db, 'config/setores'), (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                listaSetoresCadastrados = Object.values(data);
+                localStorage.setItem('cache_setores', JSON.stringify(listaSetoresCadastrados));
+            } else {
+                listaSetoresCadastrados = [];
+            }
+            agendarRenderFirebase();
+        });
+    </script>
+
+    <style>
+        :root {
+            --primary: #006837;
+            --accent: #58595b;
+            --success: #006837;
+            --pending: #d4af37;
+            --danger: #c51b24;
+            --bg: #f4f7f5;
+            --card-bg: #ffffff;
+            --text-main: #1f2937;
+            --text-muted: #4b5563;
+        }
+
+        @keyframes spin { 
+            0% { transform: rotate(0deg); } 
+            100% { transform: rotate(360deg); } 
+        }
+
+        button, a, select, input, .gestor-accordion-header, .sub-tab-btn {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 10px;
+            -webkit-text-size-adjust: 100%;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+            position: relative;
+            background: linear-gradient(135deg, #006837 0%, #004d28 100%);
+            color: white;
+            padding: 18px 12px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 104, 55, 0.15);
+        }
+
+        h1 {
+            color: white;
+            font-size: 1.4rem;
+            margin-bottom: 5px;
+            font-weight: 700;
+        }
+
+        .btn-gestor-hidden {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 50%;
+            transform: translateZ(0);
+        }
+        .btn-gestor-hidden:active {
+            transform: scale(0.92);
+        }
+
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .gestor-sub-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            background: white;
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+
+        .sub-tab-btn {
+            background: transparent;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            flex: 1;
+            min-width: 90px;
+            text-align: center;
+        }
+        .sub-tab-btn:active {
+            transform: scale(0.96);
+        }
+
+        .sub-tab-btn.active {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 2px 6px rgba(0, 104, 55, 0.2);
+        }
+
+        .gestor-sub-content {
+            display: none;
+        }
+
+        .gestor-sub-content.active {
+            display: block;
+        }
+
+        .gestor-accordion-item {
+            background: var(--card-bg);
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+
+        .gestor-accordion-header {
+            padding: 14px 16px;
+            background: #f9fafb;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+            color: var(--primary);
+            font-size: 0.9rem;
+            user-select: none;
+        }
+
+        .gestor-accordion-body {
+            display: none;
+            padding: 12px 14px;
+            border-top: 1px solid #e5e7eb;
+            background: white;
+        }
+
+        .gestor-accordion-body.open {
+            display: block;
+        }
+
+        .sub-filter-bar {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+            background: #f9fafb;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        @media (min-width: 640px) {
+            .sub-filter-bar {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .sub-filter-bar select, .sub-filter-bar input {
+            padding: 8px;
+            font-size: 0.8rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            background: white;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        .dot-verde { background-color: var(--success); }
+        .dot-vermelha { background-color: var(--danger); }
+
+        .icone-seta {
+            width: 14px;
+            height: 14px;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .seta-verde { fill: var(--success); }
+        .seta-vermelha { fill: var(--danger); }
+
+        .badges-contadores {
+            display: flex;
+            gap: 4px;
+            font-size: 0.7rem;
+            font-weight: normal;
+            flex-wrap: wrap;
+        }
+
+        .badge-count {
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: #f3f4f6;
+            color: var(--text-main);
+            font-weight: 500;
+        }
+        .badge-count.conc { background: #d1fae5; color: #065f46; }
+        .badge-count.pend { background: #fef3c7; color: #92400e; }
+        .badge-count.atra { background: #fee2e2; color: #991b1b; }
+
+        .stepper {
+            display: flex;
+            justify-content: space-between;
+            position: relative;
+            margin: 15px 0;
+            padding: 0 5px;
+        }
+
+        .stepper::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 15px;
+            right: 15px;
+            transform: translateY(-50%);
+            height: 3px;
+            background: #e5e7eb;
+            z-index: 1;
+        }
+
+        .stepper.progresso-1::before {
+            background: linear-gradient(to right, var(--success) 0%, var(--success) 33%, #e5e7eb 33%);
+        }
+        .stepper.progresso-2::before {
+            background: linear-gradient(to right, var(--success) 0%, var(--success) 66%, #e5e7eb 66%);
+        }
+        .stepper.progresso-3::before {
+            background: var(--success);
+        }
+        .stepper.atrasado::before {
+            background: var(--danger);
+        }
+
+        .step {
+            position: relative;
+            z-index: 2;
+            text-align: center;
+            background: white;
+            padding: 0 2px;
+        }
+
+        .step-circle {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: #e5e7eb;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            font-weight: bold;
+            margin: 0 auto 3px auto;
+        }
+
+        .step.active .step-circle { background: var(--pending); color: white; }
+        .step.completed .step-circle { background: var(--success); color: white; }
+        .step.danger .step-circle { background: var(--danger); color: white; }
+
+        .step-label {
+            font-size: 0.55rem;
+            color: var(--text-muted);
+            max-width: 70px;
+            line-height: 1.1;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(2px);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        .modal-card {
+            background: white;
+            padding: 20px;
+            border-radius: 16px;
+            max-width: 750px;
+            width: 100%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            position: relative;
+            max-height: 90vh;
+            overflow-y: auto;
+            margin: auto;
+            box-sizing: border-box;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px; right: 15px;
+            background: #f3f4f6;
+            border: none;
+            font-size: 1rem;
+            width: 30px; height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            z-index: 10;
+        }
+
+        .img-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            padding: 10px;
+            cursor: zoom-out;
+        }
+        .img-modal-content {
+            max-width: 100%;
+            max-height: 90vh;
+            border-radius: 8px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+            object-fit: contain;
+        }
+
+        .filter-toolbar {
+            background: var(--card-bg);
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+
+        @media (min-width: 640px) {
+            .filter-toolbar {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (min-width: 900px) {
+            .filter-toolbar {
+                grid-template-columns: 2fr 1fr 1fr 1fr;
+            }
+        }
+
+        .filter-toolbar input, .filter-toolbar select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            box-sizing: border-box;
+            background: white;
+        }
+
+        .dashboard-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        @media (min-width: 640px) {
+            .dashboard-stats {
+                grid-template-columns: repeat(5, 1fr);
+            }
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 12px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            margin: 0;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card .number {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: var(--primary);
+            margin-top: 4px;
+        }
+
+        .form-card, .occurrence-card {
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 14px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.03);
+            margin-bottom: 16px;
+            border: 1px solid #e5e7eb;
+            position: relative;
+            box-sizing: border-box;
+        }
+
+        .occurrence-card.priority-accident {
+            background-color: #fef2f2 !important;
+            border: 2px solid var(--danger) !important;
+        }
+
+        .form-card h2 {
+            font-size: 1.1rem;
+            margin: 0;
+            color: var(--primary);
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-main);
+        }
+
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            box-sizing: border-box;
+            text-transform: uppercase;
+            font-size: 0.9rem;
+        }
+        
+        .form-group input[type="file"] {
+            text-transform: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            width: 100%;
+            font-size: 0.95rem;
+            box-shadow: 0 2px 4px rgba(0, 104, 55, 0.2);
+            box-sizing: border-box;
+        }
+        .btn-primary:active {
+            transform: scale(0.98);
+        }
+
+        .card-actions-top {
+            display: flex;
+            gap: 6px;
+            justify-content: flex-end;
+            margin-bottom: 6px;
+        }
+
+        .btn-tool {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            padding: 0 14px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-muted);
+            height: 36px;
+            min-width: 95px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+        .btn-tool:active {
+            transform: scale(0.96);
+        }
+
+        .btn-tool.delete {
+            color: var(--danger);
+            border-color: #fca5a5;
+            background: #fef2f2;
+        }
+
+        .approval-box {
+            background: #f9fafb;
+            border: 1px dashed #d1d5db;
+            padding: 12px;
+            border-radius: 10px;
+            margin-top: 12px;
+            box-sizing: border-box;
+        }
+
+        .approval-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        @media (min-width: 640px) {
+            .approval-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .approval-grid-bottom {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+        }
+
+        .approval-box input, .approval-box select {
+            padding: 8px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            width: 100%;
+            box-sizing: border-box;
+            text-transform: uppercase;
+        }
+
+        .btn-approve {
+            background: var(--success);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+            width: 100%;
+        }
+
+        @media (min-width: 640px) {
+            .btn-approve {
+                width: auto;
+            }
+        }
+
+        .photos-container {
+            display: flex;
+            gap: 12px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+
+        .photo-wrapper {
+            text-align: center;
+            position: relative;
+        }
+
+        .photo-wrapper span {
+            display: block;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+            font-weight: bold;
+        }
+
+        .photo-box {
+            width: 130px;
+            height: 100px;
+            background: #f3f4f6;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1px solid #d1d5db;
+            cursor: zoom-out;
+        }
+
+        .photo-timestamp {
+            position: absolute;
+            bottom: 4px;
+            left: 4px;
+            right: 4px;
+            background: rgba(0, 0, 0, 0.75);
+            color: white;
+            font-size: 0.5rem;
+            padding: 3px 4px;
+            border-radius: 4px;
+            text-align: center;
+            pointer-events: none;
+            line-height: 1.1;
+        }
+
+        .user-info-tag {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            background: #f3f4f6;
+            padding: 6px 10px;
+            border-radius: 8px;
+            display: block;
+        }
+
+        .badge-ticket {
+            background: var(--primary);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-right: 6px;
+        }
+
+        .badge-gravidade {
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            color: white;
+            margin-left: 4px;
+        }
+        .gravidade-baixa { background: #3b82f6; }
+        .gravidade-media { background: var(--pending); color: #1f2937; }
+        .gravidade-alta { background: var(--danger); }
+
+        .btn-voltar {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+
+        .chip-gestor, .chip-setor {
+            display: inline-block;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin: 3px;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+        .chip-gestor button, .chip-setor button {
+            background: none;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            margin-left: 4px;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .chart-card {
+            background: white;
+            padding: 16px;
+            border-radius: 14px;
+            border: 1px solid #e5e7eb;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            position: relative;
+        }
+
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 768px) {
+            .chart-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .btn-download-chart {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Inspeção de Condições Inseguras</h1>
+        <p style="margin: 4px 0 0 0; font-size: 0.8rem; opacity: 0.9;">Unidade 101</p>
+        <button class="btn-gestor-hidden" onclick="solicitarAcessoGestor()" title="Acesso do Gestor">⚙️</button>
+    </header>
+
+    <div class="container">
+        <!-- Indicador Visual de Carregamento -->
+        <div id="loadingIndicator" style="display: none; text-align: center; padding: 18px; background: white; border-radius: 12px; margin-bottom: 15px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+            <div style="font-size: 1.4rem; animation: spin 1s linear infinite; display: inline-block;">⏳</div>
+            <p style="margin: 5px 0 0 0; font-size: 0.85rem; color: var(--primary); font-weight: 600;">Carregando e organizando dados do sistema...</p>
+        </div>
+
+        <!-- ABA 1: USUÁRIO -->
+        <div id="aba-usuario" class="tab-content active">
+            <div class="form-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-bottom: 0;" onclick="toggleFormularioLancar()">
+                    <h2 style="margin: 0; font-size: 1.1rem; color: var(--primary);">Registrar Condição Insegura / Incidente</h2>
+                    <button class="btn-tool" id="btnToggleFormLancar" type="button" onclick="toggleFormularioLancar(); event.stopPropagation();">➖ Minimizar</button>
+                </div>
+                
+                <div id="corpoFormularioLancar" style="margin-top: 14px;">
+                    <div class="form-group">
+                        <label for="tipoOcorrencia">Tipo de Ocorrência:</label>
+                        <select id="tipoOcorrencia" style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; background:white; font-size: 0.9rem;">
+                            <option value="Condicao Insegura">Condição Insegura</option>
+                            <option value="Incidente">Incidente</option>
+                        </select>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 12px;">
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="nomeUsuario">Seu Nome:</label>
+                            <input type="text" id="nomeUsuario" placeholder="Seu nome completo...">
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label for="localUsuario">Fábrica:</label>
+                            <select id="localUsuario" style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; background:white; font-size: 0.9rem;">
+                                <option value="">Selecione a Fábrica...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 12px;">
+                        <label for="setorUsuario">Setor (Ex: Tanque 01, Embalagem...):</label>
+                        <input type="text" id="setorUsuario" placeholder="Digite o setor específico...">
+                    </div>
+                    <div class="form-group">
+                        <label for="descricaoUsuario">Descrição do Problema:</label>
+                        <textarea id="descricaoUsuario" rows="3" placeholder="Descreva o que foi encontrado..." style="text-transform: uppercase;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="fotoUsuario">Foto da Condição (Câmara ou Galeria):</label>
+                        <input type="file" id="fotoUsuario" accept="image/*" capture="environment" style="font-size: 0.85rem;" onchange="comprimirFotoInput(event, function(base64){ fotoTempBase64 = base64; })">
+                    </div>
+                    <button class="btn-primary" onclick="usuarioReportar()">Enviar Registro</button>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-top: 25px; margin-bottom: 12px; background: white; padding: 12px 16px; border-radius: 12px; border: 1px solid #e5e7eb;" onclick="toggleAcompanhamento()">
+                <h2 style="color: var(--primary); font-size: 1.1rem; margin: 0;">Acompanhamento das Ações por Fábrica e Setor</h2>
+                <button class="btn-tool" id="btnToggleAcompanhamento" type="button" onclick="toggleAcompanhamento(); event.stopPropagation();">➖ Minimizar</button>
+            </div>
+            
+            <div id="corpoAcompanhamento">
+                <div id="listaSetoresUsuario"></div>
+            </div>
+        </div>
+
+        <!-- ABA 2: GESTOR -->
+        <div id="aba-gestor" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 8px;">
+                <button class="btn-voltar" onclick="voltarParaUsuario()" style="margin-bottom:0;">⬅️ Voltar</button>
+                <div id="statusConexaoFirebase" style="background: white; padding: 5px 12px; border-radius: 20px; border: 1px solid #e5e7eb; display: flex; align-items: center; gap: 6px; font-size: 0.75rem; font-weight: 600;">
+                    <span id="firebaseStatusIndicator" style="width: 8px; height: 8px; border-radius: 50%; background-color: #f59e0b; display: inline-block;"></span>
+                    <span id="firebaseStatusText">A Conectar...</span>
+                </div>
+            </div>
+            
+            <div class="gestor-sub-tabs">
+                <button class="sub-tab-btn active" onclick="mudarSubAba('pendentes')">⏳ Pendentes</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('execucao')">📋 Execução</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('incidentes')">🚨 Incidentes</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('modificar')">✏ Modificar</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('graficos')">📊 Gráficos</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('limpeza')">🧹 Limpeza</button>
+            </div>
+
+            <!-- SUB-ABA 1: PENDENTES -->
+            <div id="sub-aba-pendentes" class="gestor-sub-content active">
+                <div class="form-card" style="margin-bottom: 15px; background: #fdfdfd; border-left: 4px solid var(--primary);">
+                    <h2>Segurança do Painel</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: -8px; margin-bottom: 12px;">Altere a senha de acesso ao painel de gestão quando desejar.</p>
+                    <button class="btn-primary" onclick="alterarSenhaGestor()" style="max-width: 250px; background: var(--accent); font-size: 0.85rem;">🔑 Alterar Senha</button>
+                </div>
+
+                <div class="form-card" style="margin-bottom: 15px;">
+                    <h2>Gerenciar Responsáveis e WhatsApp</h2>
+                    <div class="approval-grid" style="margin-bottom: 8px;">
+                        <input type="text" id="novoGestorNome" placeholder="Nome do responsável...">
+                        <input type="text" id="novoGestorFone" placeholder="WhatsApp (Ex: 31999999999)...">
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap: wrap;">
+                        <button class="btn-primary" onclick="adicionarGestor()" style="flex:1; min-width: 140px; font-size: 0.85rem;">Salvar Responsável</button>
+                        <button class="btn-primary" onclick="renomearGestorPrompt()" style="flex:1; min-width: 140px; background: var(--accent); font-size: 0.85rem;">✏️ Renomear</button>
+                    </div>
+                    <div id="tagsGestoresCadastrados" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="form-card" style="margin-bottom: 15px;">
+                    <h2>Cadastro de Fábricas</h2>
+                    <div class="approval-grid" style="margin-bottom: 8px;">
+                        <input type="text" id="novoSetorNome" placeholder="Nome da Fábrica (Ex: Queijo)...">
+                        <select id="novoSetorResponsavel">
+                            <option value="">Selecione o Responsável...</option>
+                        </select>
+                    </div>
+                    <button class="btn-primary" onclick="cadastrarSetor()" style="font-size: 0.85rem;">Cadastrar Fábrica</button>
+                    <div id="tagsSetoresCadastrados" style="margin-top: 12px;"></div>
+                </div>
+
+                <div class="filter-toolbar" style="margin-bottom: 12px;">
+                    <div>
+                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Filtro por Pessoa:</label>
+                        <select id="filtroGlobalPessoa" onchange="renderizarTelas()">
+                            <option value="todos">👤 Todos os Responsáveis</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Filtro por Mês:</label>
+                        <select id="filtroGlobalMes" onchange="renderizarTelas()">
+                            <option value="todos">📅 Todos os Meses</option>
+                            <option value="01">Janeiro</option>
+                            <option value="02">Fevereiro</option>
+                            <option value="03">Março</option>
+                            <option value="04">Abril</option>
+                            <option value="05">Maio</option>
+                            <option value="06">Junho</option>
+                            <option value="07">Julho</option>
+                            <option value="08">Agosto</option>
+                            <option value="09">Setembro</option>
+                            <option value="10">Outubro</option>
+                            <option value="11">Novembro</option>
+                            <option value="12">Dezembro</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Filtro por Ano:</label>
+                        <select id="filtroGlobalAno" onchange="renderizarTelas()">
+                            <option value="todos">📆 Todos os Anos</option>
+                            <option value="2025">2025</option>
+                            <option value="2026">2026</option>
+                            <option value="2027">2027</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Filtro por Gravidade:</label>
+                        <select id="filtroGlobalGravidade" onchange="renderizarTelas()">
+                            <option value="todos">⚡ Todas as Gravidades</option>
+                            <option value="Baixa">Baixa</option>
+                            <option value="Média">Média</option>
+                            <option value="Alta">Alta</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="dashboard-stats">
+                    <div class="stat-card">
+                        <h3>Reportadas</h3>
+                        <div class="number" id="statReportadas">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Concluídas</h3>
+                        <div class="number" id="statConcluidas" style="color: var(--success);">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Vencidas</h3>
+                        <div class="number" id="statVencidas" style="color: var(--danger);">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Média Mês</h3>
+                        <div class="number" id="statMediaMensal" style="color: var(--primary);">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Média Ano</h3>
+                        <div class="number" id="statMediaAnual" style="color: var(--primary);">0</div>
+                    </div>
+                </div>
+
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-top: 25px; margin-bottom: 12px;">Ocorrências Pendentes de Validação</h2>
+                <div id="listaGestorPendentes"></div>
+            </div>
+
+            <!-- SUB-ABA 2: EM EXECUÇÃO -->
+            <div id="sub-aba-execucao" class="gestor-sub-content">
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">Ações Validadas e em Andamento</h2>
+                
+                <div class="filter-toolbar">
+                    <input type="text" id="filtroBuscaAprovadas" placeholder="🔍 Pesquisar por Ticket ou Nome..." oninput="renderizarAprovadasGestor()">
+                    <select id="filtroMesAprovadas" onchange="renderizarAprovadasGestor()">
+                        <option value="todos">📅 Todos os Meses</option>
+                        <option value="01">Janeiro</option>
+                        <option value="02">Fevereiro</option>
+                        <option value="03">Março</option>
+                        <option value="04">Abril</option>
+                        <option value="05">Maio</option>
+                        <option value="06">Junho</option>
+                        <option value="07">Julho</option>
+                        <option value="08">Agosto</option>
+                        <option value="09">Setembro</option>
+                        <option value="10">Outubro</option>
+                        <option value="11">Novembro</option>
+                        <option value="12">Dezembro</option>
+                    </select>
+                    <select id="filtroStatusAprovadas" onchange="renderizarAprovadasGestor()">
+                        <option value="todos">📌 Todos os Status</option>
+                        <option value="aprovado">Em Execução</option>
+                        <option value="vencida">⚠️ Vencidas</option>
+                        <option value="concluido">Concluídas</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:6px; font-size:0.8rem;">
+                        <input type="checkbox" id="ocultarConcluidas" onchange="renderizarAprovadasGestor()" style="width: auto; cursor:pointer;">
+                        <label for="ocultarConcluidas" style="margin:0; cursor:pointer; font-weight:600;">Ocultar Concluídas</label>
+                    </div>
+                </div>
+
+                <div id="listaGestorAprovadas"></div>
+            </div>
+
+            <!-- SUB-ABA 3: INCIDENTES -->
+            <div id="sub-aba-incidentes" class="gestor-sub-content">
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">🚨 Gestão de Incidentes Registrados</h2>
+                
+                <div class="filter-toolbar">
+                    <input type="text" id="filtroBuscaIncidentes" placeholder="🔍 Pesquisar por Ticket, Nome ou Descrição..." oninput="renderizarIncidentesGestor()">
+                    <select id="filtroMesIncidentes" onchange="renderizarIncidentesGestor()">
+                        <option value="todos">📅 Todos os Meses</option>
+                        <option value="01">Janeiro</option>
+                        <option value="02">Fevereiro</option>
+                        <option value="03">Março</option>
+                        <option value="04">Abril</option>
+                        <option value="05">Maio</option>
+                        <option value="06">Junho</option>
+                        <option value="07">Julho</option>
+                        <option value="08">Agosto</option>
+                        <option value="09">Setembro</option>
+                        <option value="10">Outubro</option>
+                        <option value="11">Novembro</option>
+                        <option value="12">Dezembro</option>
+                    </select>
+                    <select id="filtroAnoIncidentes" onchange="renderizarIncidentesGestor()">
+                        <option value="todos">📆 Todos os Anos</option>
+                        <option value="2025">2025</option>
+                        <option value="2026">2026</option>
+                        <option value="2027">2027</option>
+                    </select>
+                    <select id="filtroFabricaIncidentes" onchange="renderizarIncidentesGestor()">
+                        <option value="todos">🏭 Todas as Fábricas</option>
+                    </select>
+                </div>
+
+                <div id="listaGestorIncidentes"></div>
+            </div>
+
+            <!-- SUB-ABA 4: MODIFICAR AÇÕES -->
+            <div id="sub-aba-modificar" class="gestor-sub-content">
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">Central de Modificação e Exclusão</h2>
+                
+                <div class="filter-toolbar">
+                    <input type="text" id="filtroBuscaModificar" placeholder="🔍 Pesquisar por Ticket ou Descrição..." oninput="renderizarModificarGestor()">
+                    <select id="filtroStatusModificar" onchange="renderizarModificarGestor()">
+                        <option value="todos">📌 Todos os Status</option>
+                        <option value="abertas">Em Aberto / Execução</option>
+                        <option value="concluidas">Concluídas</option>
+                    </select>
+                    <select id="filtroAcidenteModificar" onchange="renderizarModificarGestor()">
+                        <option value="todos">⚡ Todos os Acidentes</option>
+                        <option value="com">Com Acidente Vinculado</option>
+                        <option value="sem">Sem Acidente Vinculado</option>
+                    </select>
+                </div>
+
+                <div id="listaGestorModificar"></div>
+            </div>
+
+            <!-- SUB-ABA 5: GRÁFICOS -->
+            <div id="sub-aba-graficos" class="gestor-sub-content">
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">Relatórios e Gráficos de Desempenho</h2>
+                <div class="chart-grid">
+                    <div class="chart-card" style="height: 380px;">
+                        <button class="btn-download-chart" onclick="baixarGrafico('graficoStatus', 'status_geral.png')">📥 Baixar</button>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-right:70px;">
+                            <h3 style="font-size:0.85rem; color:var(--primary); margin:0;">Status Geral do Sistema</h3>
+                            <select id="tipoGraficoStatus" onchange="renderizarGraficosReais()" style="padding:4px 6px; font-size:0.75rem; border:1px solid #d1d5db; border-radius:6px; background:#f9fafb;">
+                                <option value="doughnut">Rosca</option>
+                                <option value="pie">Pizza</option>
+                                <option value="bar">Colunas</option>
+                            </select>
+                        </div>
+                        <div style="position: relative; height: 270px;"><canvas id="graficoStatus"></canvas></div>
+                    </div>
+                    <div class="chart-card" style="height: 380px;">
+                        <button class="btn-download-chart" onclick="baixarGrafico('graficoResponsaveis', 'acoes_responsaveis.png')">📥 Baixar</button>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding-right:70px;">
+                            <h3 style="font-size:0.85rem; color:var(--primary); margin:0;">Ações por Responsável</h3>
+                            <select id="tipoGraficoResp" onchange="renderizarGraficosReais()" style="padding:4px 6px; font-size:0.75rem; border:1px solid #d1d5db; border-radius:6px; background:#f9fafb;">
+                                <option value="horizontalBar">Barras Horizontais</option>
+                                <option value="bar">Barras Verticais</option>
+                                <option value="line">Linha</option>
+                            </select>
+                        </div>
+                        <div style="position: relative; height: 270px;"><canvas id="graficoResponsaveis"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SUB-ABA 6: LIMPEZA E ARQUIVAMENTO -->
+            <div id="sub-aba-limpeza" class="gestor-sub-content">
+                <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">🧹 Limpeza e Arquivamento de Ocorrências</h2>
+                
+                <div class="form-card" style="margin-bottom: 15px; border-left: 4px solid var(--primary);">
+                    <h3 style="color: var(--primary); margin-top:0; font-size:1rem;">📥 Exportar Todos os Dados (Sem Fotos)</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">
+                        Baixe uma planilha em formato Excel (CSV) contendo o histórico completo de todas as ocorrências e incidentes registrados no sistema, <strong>sem o peso das imagens</strong>.
+                    </p>
+                    <button class="btn-primary" onclick="exportarDadosSemFotos()" style="background: var(--primary); margin-top: 10px;">📊 Baixar Relatório em Excel (Apenas Dados)</button>
+                </div>
+
+                <div class="form-card" style="border-left: 4px solid var(--danger);">
+                    <h3 style="color: var(--danger); margin-top:0; font-size:1rem;">Área de Otimização do Banco de Dados</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">
+                        Permite limpar o Firebase de ocorrências concluídas antigas para poupar espaço. 
+                        <strong>Antes de apagar, o sistema gera e descarrega um arquivo Excel (CSV)</strong> com todo o histórico escrito completo, dados, prazos e registo de fotos.
+                    </p>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label for="filtroTempoLimpeza">Selecionar período das ocorrências CONCLUÍDAS para limpar:</label>
+                        <select id="filtroTempoLimpeza" style="padding: 10px; border-radius: 8px; border: 1px solid #d1d5db; background: white; font-size: 0.85rem;">
+                            <option value="30">Concluídas há mais de 30 dias</option>
+                            <option value="90">Concluídas há mais de 3 meses (90 dias)</option>
+                            <option value="180">Concluídas há mais de 6 meses (180 dias)</option>
+                            <option value="365">Concluídas há mais de 1 ano (365 dias)</option>
+                            <option value="todas_concluidas">⚠ TODAS as Concluídas (Independente da data)</option>
+                        </select>
+                    </div>
+
+                    <button class="btn-primary" onclick="executarLimpezaEBackup()" style="background: var(--danger); margin-top: 10px;">📥 Baixar Backup Excel e Limpar Firebase</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Detalhado -->
+    <div class="modal-overlay" id="modalDetalhe">
+        <div class="modal-card">
+            <button class="modal-close" onclick="fecharModal()">×</button>
+            <h2 style="margin-top: 0; color: var(--primary); font-size: 1.2rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px;">Detalhes da Ação</h2>
+            <div id="conteudoDetalheModal" style="display: flex; flex-direction: column; gap: 12px; font-size: 0.85rem; line-height: 1.4;"></div>
+        </div>
+    </div>
+
+    <!-- Modal de Gráfico Evolutivo -->
+    <div class="modal-overlay" id="modalGraficoLocal">
+        <div class="modal-card" style="max-width: 800px; position: relative;">
+            <button class="modal-close" onclick="fecharModalGraficoLocal()">×</button>
+            <button class="btn-download-chart" onclick="baixarGrafico('canvasGraficoLocalModal', 'evolucao_local.png')" style="top: 15px; right: 55px;">📥 Baixar</button>
+            <h2 id="tituloModalGraficoLocal" style="margin-top: 0; color: var(--primary); font-size: 1.1rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px; padding-right: 90px;">Evolução de Ações</h2>
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                <select id="tipoVisaoGraficoLocal" onchange="atualizarGraficoLocalModal()" style="padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; font-size: 0.8rem;">
+                    <option value="mes">📅 Visão Mês a Mês (Ano Atual)</option>
+                    <option value="ano">📆 Visão Ano a Ano</option>
+                </select>
+            </div>
+            <div style="position: relative; height: 300px;">
+                <canvas id="canvasGraficoLocalModal"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Zoom de Imagem -->
+    <div class="img-modal-overlay" id="modalZoomImg" onclick="fecharZoomImg()">
+        <img class="img-modal-content" id="imgZoomFull">
+    </div>
+
+    <script>
+        Chart.register(ChartDataLabels);
+
+        let totalReportadas = 0;
+        let totalConcluidas = 0;
+        let totalVencidas = 0;
+        let totalAlteradas = 0;
+        
+        function lerCacheArray(chave) {
+            try {
+                const valor = JSON.parse(localStorage.getItem(chave) || '[]');
+                return Array.isArray(valor) ? valor : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        let ocorrencias = lerCacheArray('cache_ocorrencias');
+        let listaGestores = lerCacheArray('cache_gestores');
+        let listaSetoresCadastrados = lerCacheArray('cache_setores');
+        
+        setTimeout(() => { renderizarTelas(); }, 10);
+
+        let fotoTempBase64 = null;
+        let filtrosSetor = {};
+        let minimizacoesUsuarioState = {};
+        let minimizacoesAprovadasState = {};
+        let estadosAcordeonSetor = {};
+        let estadosAcordeonRespNoSetor = {};
+        let chartStatusInstance = null;
+        let chartRespInstance = null;
+        let chartLocalModalInstance = null;
+        let localAtualModalGrafico = '';
+
+        let senhaGestor = localStorage.getItem('senhaGestor') || '1234';
+        let formLancarAberto = true;
+        let acompanhamentoAberto = true;
+
+        function toggleFormularioLancar() {
+            formLancarAberto = !formLancarAberto;
+            const corpo = document.getElementById('corpoFormularioLancar');
+            const btn = document.getElementById('btnToggleFormLancar');
+            if (formLancarAberto) {
+                corpo.style.display = 'block';
+                btn.innerText = '➖ Minimizar';
+            } else {
+                corpo.style.display = 'none';
+                btn.innerText = '➕ Expandir';
+            }
+        }
+
+        function toggleAcompanhamento() {
+            acompanhamentoAberto = !acompanhamentoAberto;
+            const corpo = document.getElementById('corpoAcompanhamento');
+            const btn = document.getElementById('btnToggleAcompanhamento');
+            if (acompanhamentoAberto) {
+                corpo.style.display = 'block';
+                btn.innerText = '➖ Minimizar';
+            } else {
+                corpo.style.display = 'none';
+                btn.innerText = '➕ Expandir';
+            }
+        }
+
+        function alterarSenhaGestor() {
+            setTimeout(() => {
+                let senhaAtual = prompt("Digite a senha atual do painel:");
+                if (senhaAtual === null) return;
+                if (senhaAtual !== senhaGestor) {
+                    alert("Senha atual incorreta!");
+                    return;
+                }
+                let novaSenha = prompt("Digite a nova senha de acesso:");
+                if (!novaSenha || novaSenha.trim() === "") {
+                    alert("A nova senha não pode ser vazia.");
+                    return;
+                }
+                let confirmaSenha = prompt("Confirme a nova senha:");
+                if (novaSenha !== confirmaSenha) {
+                    alert("As senhas não coincidem!");
+                    return;
+                }
+                senhaGestor = novaSenha.trim();
+                localStorage.setItem('senhaGestor', senhaGestor);
+                alert("Senha alterada com sucesso!");
+            }, 10);
+        }
+
+        function comprimirFotoInput(event, callback) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    let largura = img.width;
+                    let altura = img.height;
+                    const maxDim = 800;
+
+                    if (largura > maxDim || altura > maxDim) {
+                        if (largura > altura) {
+                            altura = Math.round((altura * maxDim) / largura);
+                            largura = maxDim;
+                        } else {
+                            largura = Math.round((largura * maxDim) / altura);
+                            altura = maxDim;
+                        }
+                    }
+
+                    canvas.width = largura;
+                    canvas.height = altura;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, largura, altura);
+
+                    const agora = new Date();
+                    const dataStr = agora.toLocaleDateString('pt-BR');
+                    const horaStr = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    const textoCarimbo = `UNIDADE 101 | 📅 ${dataStr} 🕒 ${horaStr}`;
+
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+                    ctx.fillRect(0, canvas.height - 35, canvas.width, 35);
+
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 14px Arial";
+                    ctx.textAlign = "center";
+                    ctx.fillText(textoCarimbo, canvas.width / 2, canvas.height - 12);
+
+                    const base64Result = canvas.toDataURL('image/jpeg', 0.6);
+                    if (callback) callback(base64Result);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function abrirZoomImg(url) {
+            document.getElementById('imgZoomFull').src = url;
+            document.getElementById('modalZoomImg').style.display = 'flex';
+        }
+
+        function fecharZoomImg() {
+            document.getElementById('modalZoomImg').style.display = 'none';
+        }
+
+        function gerarTimestampCarimbo() {
+            const agora = new Date();
+            const dataStr = agora.toLocaleDateString('pt-BR');
+            const horaStr = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return `UNIDADE 101 | 📅 ${dataStr} 🕒 ${horaStr}`;
+        }
+
+        function solicitarAcessoGestor() {
+            setTimeout(() => {
+                let tentativa = prompt("Digite a senha de acesso do gestor:");
+                if (tentativa === null) return;
+                if (tentativa === senhaGestor) {
+                    document.getElementById('aba-usuario').classList.remove('active');
+                    document.getElementById('aba-gestor').classList.add('active');
+                    renderizarTelas();
+                } else {
+                    alert("Senha incorreta!");
+                }
+            }, 10);
+        }
+
+        function voltarParaUsuario() {
+            document.getElementById('aba-gestor').classList.remove('active');
+            document.getElementById('aba-usuario').classList.add('active');
+        }
+
+        function mudarSubAba(sub) {
+            document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.gestor-sub-content').forEach(c => c.classList.remove('active'));
+
+            if (sub === 'pendentes') {
+                document.querySelectorAll('.sub-tab-btn')[0].classList.add('active');
+                document.getElementById('sub-aba-pendentes').classList.add('active');
+            } else if (sub === 'execucao') {
+                document.querySelectorAll('.sub-tab-btn')[1].classList.add('active');
+                document.getElementById('sub-aba-execucao').classList.add('active');
+                renderizarAprovadasGestor();
+            } else if (sub === 'incidentes') {
+                document.querySelectorAll('.sub-tab-btn')[2].classList.add('active');
+                document.getElementById('sub-aba-incidentes').classList.add('active');
+                renderizarIncidentesGestor();
+            } else if (sub === 'modificar') {
+                document.querySelectorAll('.sub-tab-btn')[3].classList.add('active');
+                document.getElementById('sub-aba-modificar').classList.add('active');
+                renderizarModificarGestor();
+            } else if (sub === 'graficos') {
+                document.querySelectorAll('.sub-tab-btn')[4].classList.add('active');
+                document.getElementById('sub-aba-graficos').classList.add('active');
+                renderizarGraficosReais();
+            } else if (sub === 'limpeza') {
+                document.querySelectorAll('.sub-tab-btn')[5].classList.add('active');
+                document.getElementById('sub-aba-limpeza').classList.add('active');
+            }
+        }
+
+        function converterIncidenteParaAcao(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (!item) return;
+
+            if (confirm(`Deseja converter o registro ${item.ticket} de "Incidente" para "Condição Insegura"?\n\nEle será enviado para o fluxo normal de pendências/validação.`)) {
+                item.tipoOcorrencia = 'Condicao Insegura';
+                item.status = 'pendente';
+                window.fbSalvarOcorrencia(item);
+                alert("Incidente convertido em Condição Insegura com sucesso!");
+            }
+        }
+
+        function exportarDadosSemFotos() {
+            if (ocorrencias.length === 0) {
+                alert("Não há registros no sistema para exportar.");
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+            csvContent += "Ticket;Tipo;Data Criacao;Criador;Fabrica;Setor;Descricao;Gravidade;Status;Validor;Responsavel;Data Prazo;Data Conclusao Real;Historico Alteracoes\n";
+
+            ocorrencias.forEach(item => {
+                let historicoStr = (item.historicoAlteracoes || []).join(" | ").replace(/;/g, ",");
+                let descStr = (item.desc || "").replace(/;/g, ",").replace(/\n/g, " ");
+                let linha = [
+                    item.ticket,
+                    item.tipoOcorrencia || "Condicao Insegura",
+                    item.dataCriacao || "",
+                    item.criador || item.nome || "",
+                    item.local || "",
+                    item.setor || "",
+                    `"${descStr}"`,
+                    item.gravidade || "",
+                    item.status || "",
+                    item.validor || "",
+                    item.responsavel || "",
+                    item.dataConclusaoPrazo || "",
+                    item.dataConclusaoReal || "",
+                    `"${historicoStr}"`
+                ].join(";");
+                csvContent += linha + "\r\n";
+            });
+
+            let encodedUri = encodeURI(csvContent);
+            let link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `relatorio_geral_dados_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            alert("Relatório de dados exportado com sucesso!");
+        }
+
+        function executarLimpezaEBackup() {
+            let diasLimite = document.getElementById('filtroTempoLimpeza').value;
+            let ocorrenciasConcluidas = ocorrencias.filter(x => x.status === 'concluido');
+            let hoje = new Date();
+            hoje.setHours(0,0,0,0);
+            let paraRemover = [];
+
+            if (diasLimite === 'todas_concluidas') {
+                paraRemover = ocorrenciasConcluidas;
+            } else {
+                let diasNum = parseInt(diasLimite);
+                paraRemover = ocorrenciasConcluidas.filter(item => {
+                    if (!item.dataConclusaoReal) return false;
+                    let dataConc = new Date(item.dataConclusaoReal);
+                    let diffTime = hoje - dataConc;
+                    let diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                    return diffDays >= diasNum;
+                });
+            }
+
+            if (paraRemover.length === 0) {
+                alert("Nenhuma ocorrência concluída encontrada para o critério selecionado.");
+                return;
+            }
+
+            if (!confirm(`Foram encontradas ${paraRemover.length} ocorrência(s) concluída(s) para limpeza.\n\nO sistema vai gerar o backup em Excel (CSV) e em seguida apagar do Firebase. Deseja continuar?`)) {
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+            csvContent += "Ticket;Tipo;Data Criacao;Criador;Fabrica;Setor;Descricao;Gravidade;Status;Validor;Responsavel;Data Prazo;Data Conclusao Real;Historico Alteracoes\n";
+
+            paraRemover.forEach(item => {
+                let historicoStr = (item.historicoAlteracoes || []).join(" | ").replace(/;/g, ",");
+                let descStr = (item.desc || "").replace(/;/g, ",").replace(/\n/g, " ");
+                let linha = [
+                    item.ticket,
+                    item.tipoOcorrencia || "Condicao Insegura",
+                    item.dataCriacao || "",
+                    item.criador || item.nome || "",
+                    item.local || "",
+                    item.setor || "",
+                    `"${descStr}"`,
+                    item.gravidade || "",
+                    item.status || "",
+                    item.validor || "",
+                    item.responsavel || "",
+                    item.dataConclusaoPrazo || "",
+                    item.dataConclusaoReal || "",
+                    `"${historicoStr}"`
+                ].join(";");
+                csvContent += linha + "\r\n";
+            });
+
+            let encodedUri = encodeURI(csvContent);
+            let link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `backup_inspecoes_concluidas_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            paraRemover.forEach(item => {
+                window.fbExcluirOcorrencia(item.id);
+            });
+
+            alert(`Backup gerado com sucesso e ${paraRemover.length} ocorrência(s) removida(s) do Firebase!`);
+        }
+
+        function adicionarGestor() {
+            const inputNome = document.getElementById('novoGestorNome');
+            const inputFone = document.getElementById('novoGestorFone');
+            const nome = inputNome.value.trim().toUpperCase();
+            const fone = inputFone.value.trim().replace(/\D/g, '');
+
+            if (!nome) {
+                alert("Digite o nome do responsável.");
+                return;
+            }
+
+            let existente = listaGestores.find(g => g.nome === nome);
+            if (existente) {
+                existente.fone = fone || existente.fone;
+                alert("Dados do responsável atualizados com sucesso!");
+            } else {
+                listaGestores.push({ nome, fone });
+                alert("Responsável cadastrado com sucesso!");
+            }
+
+            window.fbSalvarGestores(listaGestores);
+            inputNome.value = '';
+            inputFone.value = '';
+            renderizarTelas();
+        }
+
+        function removerGestor(nome) {
+            listaGestores = listaGestores.filter(g => g.nome !== nome);
+            window.fbSalvarGestores(listaGestores);
+            renderizarTelas();
+        }
+
+        function renomearGestorPrompt() {
+            setTimeout(() => {
+                let antigo = prompt("Digite o nome atual do responsável que deseja alterar:");
+                if (!antigo) return;
+                antigo = antigo.trim().toUpperCase();
+                let obj = listaGestores.find(g => g.nome === antigo);
+                if (!obj) {
+                    alert("Responsável não encontrado na lista.");
+                    return;
+                }
+                let novo = prompt(`Digite o novo nome para substituir "${antigo}":`);
+                if (!novo) return;
+                novo = novo.trim().toUpperCase();
+                if (listaGestores.some(g => g.nome === novo)) {
+                    alert("Já existe um responsável cadastrado com esse novo nome.");
+                    return;
+                }
+
+                obj.nome = novo;
+
+                ocorrencias.forEach(item => {
+                    if (item.responsavel === antigo) {
+                        item.responsavel = novo;
+                    }
+                });
+
+                listaSetoresCadastrados.forEach(s => {
+                    if (s.responsavel === antigo) {
+                        s.responsavel = novo;
+                    }
+                });
+
+                window.fbSalvarGestores(listaGestores);
+                window.fbSalvarSetores(listaSetoresCadastrados);
+                ocorrencias.forEach(item => window.fbSalvarOcorrencia(item));
+
+                renderizarTelas();
+                alert(`Responsável alterado de "${antigo}" para "${novo}" com sucesso!`);
+            }, 10);
+        }
+
+        function enviarWhatsApp(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (!item || !item.responsavel) {
+                alert("Esta ação ainda não possui um responsável atribuído.");
+                return;
+            }
+
+            let respObj = listaGestores.find(g => g.nome === item.responsavel);
+            let foneResp = respObj ? respObj.fone : '';
+
+            let dataProgStr = formatarDataBR(item.dataConclusaoPrazo) || 'A definir';
+            let mensagem = `*🚨 NOVA AÇÃO DE SEGURANÇA ATRIBUÍDA*\n\n` +
+                           `*Ticket:* ${item.ticket}\n` +
+                           `*Fábrica:* ${item.local}\n` +
+                           `*Setor:* ${item.setor}\n` +
+                           `*Descrição:* ${item.desc}\n` +
+                           `*Gravidade:* ${item.gravidade}\n` +
+                           `*Prazo Limite:* ${dataProgStr}\n` +
+                           `*Responsável:* ${item.responsavel}\n\n` +
+                           `Por favor, acesse o painel para gerenciar e concluir esta ocorrência.`;
+
+            let url = `https://wa.me/${foneResp}?text=${encodeURIComponent(mensagem)}`;
+            window.open(url, '_blank');
+
+            item.whatsappEnviado = true;
+            window.fbSalvarOcorrencia(item);
+        }
+
+        function cadastrarSetor() {
+            const nomeSetor = document.getElementById('novoSetorNome').value.trim().toUpperCase();
+            const respSetor = document.getElementById('novoSetorResponsavel').value;
+            if (!nomeSetor || !respSetor) {
+                alert("Preencha o nome da fábrica e selecione o responsável.");
+                return;
+            }
+            if (listaSetoresCadastrados.some(s => s.nome.toUpperCase() === nomeSetor && s.responsavel === respSetor)) {
+                alert("Esta fábrica já está cadastrada para este responsável.");
+                return;
+            }
+            listaSetoresCadastrados.push({ nome: nomeSetor, responsavel: respSetor });
+            window.fbSalvarSetores(listaSetoresCadastrados);
+            document.getElementById('novoSetorNome').value = '';
+            document.getElementById('novoSetorResponsavel').value = '';
+            renderizarTelas();
+            alert("Fábrica cadastrada com sucesso!");
+        }
+
+        function removerSetor(nomeSetor, responsavelSetor) {
+            listaSetoresCadastrados = listaSetoresCadastrados.filter(s => !(s.nome === nomeSetor && s.responsavel === responsavelSetor));
+            window.fbSalvarSetores(listaSetoresCadastrados);
+            renderizarTelas();
+        }
+
+        function atualizarFiltroSetor(nomeLocal, tipo, valor) {
+            if (!filtrosSetor[nomeLocal]) filtrosSetor[nomeLocal] = { status: 'todos', buscaSetor: '' };
+            filtrosSetor[nomeLocal][tipo] = valor;
+            renderizarTelas();
+        }
+
+        function atualizarIndicadores(listaFiltrada) {
+            let reportadas = listaFiltrada.length;
+            let concluidas = listaFiltrada.filter(x => x.status === 'concluido').length;
+            let vencidas = listaFiltrada.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length;
+
+            document.getElementById('statReportadas').innerText = reportadas;
+            document.getElementById('statConcluidas').innerText = concluidas;
+            document.getElementById('statVencidas').innerText = vencidas;
+
+            let mesesUnicos = [...new Set(listaFiltrada.map(x => x.mes))].length || 1;
+            let mediaMensal = (concluidas / mesesUnicos).toFixed(1);
+            let mediaAnual = (concluidas).toFixed(0);
+
+            document.getElementById('statMediaMensal').innerText = mediaMensal;
+            document.getElementById('statMediaAnual').innerText = mediaAnual;
+        }
+
+        function calcularDiasRestantes(dataIso) {
+            if (!dataIso) return null;
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0);
+            const prazo = new Date(dataIso);
+            prazo.setHours(0, 0, 0, 0);
+            const diffTime = prazo - hoje;
+            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays;
+        }
+
+        function calcularDiasAtrasoReal(dataPrazo, dataReal) {
+            if (!dataPrazo || !dataReal) return 0;
+            const prazo = new Date(dataPrazo);
+            prazo.setHours(0, 0, 0, 0);
+            const real = new Date(dataReal);
+            real.setHours(0, 0, 0, 0);
+            const diffTime = real - prazo;
+            const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays > 0 ? diffDays : 0;
+        }
+
+        function usuarioReportar() {
+            const tipoOco = document.getElementById('tipoOcorrencia').value;
+            const nome = document.getElementById('nomeUsuario').value.trim().toUpperCase();
+            const local = document.getElementById('localUsuario').value;
+            const setor = document.getElementById('setorUsuario').value.trim().toUpperCase();
+            const desc = document.getElementById('descricaoUsuario').value.trim().toUpperCase();
+
+            if (!nome || !local || !setor || !desc) {
+                alert('Preencha seu nome, selecione a fábrica, informe o setor e a descrição.');
+                return;
+            }
+
+            window.fbGerarProximoTicket(function(ticketNum) {
+                const agora = new Date();
+                const dataIso = agora.toISOString().split('T')[0];
+                const anoAtual = String(agora.getFullYear());
+                const mesAtual = String(agora.getMonth() + 1).padStart(2, '0');
+
+                const novaOcorrencia = {
+                    id: Date.now(),
+                    ticket: ticketNum,
+                    tipoOcorrencia: tipoOco,
+                    dataCriacao: dataIso,
+                    criador: nome,
+                    nome, local, setor, desc,
+                    foto: fotoTempBase64 || null,
+                    timestampFotoAntes: fotoTempBase64 ? gerarTimestampCarimbo() : null,
+                    fotoConclusao: null,
+                    timestampFotoDepois: null,
+                    status: 'pendente',
+                    validor: '',
+                    responsavel: '',
+                    dataConclusaoPrazo: '',
+                    gravidade: 'BAIXA',
+                    acaoAcidenteVinculado: '',
+                    numAcidente: '',
+                    mes: mesAtual,
+                    ano: anoAtual,
+                    historicoAlteracoes: [],
+                    revertido: false,
+                    whatsappEnviado: false
+                };
+
+                window.fbSalvarOcorrencia(novaOcorrencia);
+
+                totalReportadas++;
+                document.getElementById('nomeUsuario').value = '';
+                document.getElementById('localUsuario').value = '';
+                document.getElementById('setorUsuario').value = '';
+                document.getElementById('descricaoUsuario').value = '';
+                document.getElementById('fotoUsuario').value = '';
+                fotoTempBase64 = null;
+                
+                if(formLancarAberto) toggleFormularioLancar();
+                
+                alert('Registro enviado com sucesso! Protocolo gerado: ' + ticketNum);
+            });
+        }
+
+        function formatarDataBR(dataIso) {
+            if (!dataIso) return '';
+            const p = dataIso.split('-');
+            if (p.length === 3) return `${p[2]}/${p[1]}/${p[0]}`;
+            return dataIso;
+        }
+
+        function verificarVencimento(dataIso) {
+            if (!dataIso) return false;
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0);
+            const prazo = new Date(dataIso);
+            prazo.setHours(0, 0, 0, 0);
+            return prazo < hoje;
+        }
+
+        function alterarPrazoUsuario(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (!item) return;
+
+            if (item.status === 'concluido') {
+                alert("⚠️ Ação concluída! Para alterar prazos, é necessário revogar/reverter a conclusão primeiro.");
+                return;
+            }
+
+            setTimeout(() => {
+                let autor = prompt("Informe o seu nome (obrigatório para registrar a alteração do prazo):");
+                if (!autor || autor.trim() === "") {
+                    alert("Operação cancelada: é obrigatório informar o nome.");
+                    return;
+                }
+                autor = autor.trim().toUpperCase();
+
+                let wrapperModal = document.createElement('div');
+                wrapperModal.style.position = 'fixed';
+                wrapperModal.style.top = '0';
+                wrapperModal.style.left = '0';
+                wrapperModal.style.width = '100%';
+                wrapperModal.style.height = '100%';
+                wrapperModal.style.background = 'rgba(0,0,0,0.6)';
+                wrapperModal.style.zIndex = '99999';
+                wrapperModal.style.display = 'flex';
+                wrapperModal.style.alignItems = 'center';
+                wrapperModal.style.justifyContent = 'center';
+
+                let cardModal = document.createElement('div');
+                cardModal.style.background = 'white';
+                cardModal.style.padding = '20px';
+                cardModal.style.borderRadius = '12px';
+                cardModal.style.width = '90%';
+                cardModal.style.maxWidth = '350px';
+                cardModal.style.textAlign = 'center';
+                cardModal.innerHTML = `
+                    <h3 style="margin-top:0; color:var(--primary); font-size:1.1rem; margin-bottom:12px;">📅 Definir Prazo Limite</h3>
+                    <div style="margin-bottom:14px; text-align:left;">
+                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">Selecione a Data:</label>
+                        <input type="date" id="inputDataPrazoMobile" value="${item.dataConclusaoPrazo || ''}" style="width:100%; padding:10px; border:1px solid #d1d5db; border-radius:8px; font-size:1rem; box-sizing:border-box;">
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="btnSalvarPrazoMobile" class="btn-primary" style="flex:1;">Salvar Prazo</button>
+                        <button id="btnCancelarPrazoMobile" class="btn-tool" style="flex:1; background:#e5e7eb; color:#1f2937;">Cancelar</button>
+                    </div>
+                `;
+
+                wrapperModal.appendChild(cardModal);
+                document.body.appendChild(wrapperModal);
+
+                document.getElementById('btnCancelarPrazoMobile').onclick = () => {
+                    document.body.removeChild(wrapperModal);
+                };
+
+                document.getElementById('btnSalvarPrazoMobile').onclick = () => {
+                    let novaData = document.getElementById('inputDataPrazoMobile').value;
+                    if (!novaData) {
+                        alert("Selecione uma data válida.");
+                        return;
+                    }
+
+                    if (!item.historicoAlteracoes) item.historicoAlteracoes = [];
+                    if (!item.dataConclusaoPrazo) {
+                        item.dataConclusaoPrazo = novaData;
+                    } else if (item.dataConclusaoPrazo !== novaData) {
+                        let dataAntigaFormatada = formatarDataBR(item.dataConclusaoPrazo);
+                        let dataNovaFormatada = formatarDataBR(novaData);
+                        let dataModificacao = new Date().toLocaleDateString('pt-BR');
+                        item.historicoAlteracoes.push(`EM ${dataModificacao} POR <strong>${autor}</strong>: DE ${dataAntigaFormatada} PARA ${dataNovaFormatada}`);
+                        item.dataConclusaoPrazo = novaData;
+                        totalAlteradas++;
+                    }
+
+                    window.fbSalvarOcorrencia(item);
+                    document.body.removeChild(wrapperModal);
+                    alert("Prazo definido/atualizado com sucesso!");
+                };
+            }, 10);
+        }
+
+        function gerarStepperAbaUsuario(item) {
+            let atrasada = item.status !== 'concluido' && verificarVencimento(item.dataConclusaoPrazo);
+            
+            let statusTexto = 'EM ANDAMENTO';
+            if (item.status === 'concluido') {
+                let diasAtraso = calcularDiasAtrasoReal(item.dataConclusaoPrazo, item.dataConclusaoReal);
+                if (diasAtraso > 0) {
+                    statusTexto = `CONCLUÍDO COM ${diasAtraso} DIA(S) DE ATRASO ⚠️`;
+                } else {
+                    statusTexto = 'CONCLUÍDO';
+                }
+            } else if (atrasada) {
+                statusTexto = 'ATRASADA';
+            }
+            
+            let corCirculoResolutiva = item.status === 'concluido' ? 'completed' : atrasada ? 'danger' : (item.dataConclusaoPrazo ? 'completed' : 'active');
+            let simboloResolutiva = atrasada ? 'X' : (item.status === 'concluido' || item.dataConclusaoPrazo ? '✓' : '3');
+            let corStatus = item.status === 'concluido' ? 'var(--success)' : atrasada ? 'var(--danger)' : 'var(--pending)';
+
+            let dataFormatadaExibida = item.dataConclusaoPrazo ? `DATA PROG: ${formatarDataBR(item.dataConclusaoPrazo)}` : 'DATA PROGRAMADA: A DEFINIR';
+            let qtdAlteracoes = item.historicoAlteracoes ? item.historicoAlteracoes.length : 0;
+            let historicoLabel = qtdAlteracoes > 0 ? `<br><span style="color:var(--pending); font-size:0.55rem; font-weight:bold;">(PRAZO PRORROGADO ${qtdAlteracoes}X)</span>` : '';
+
+            let labelPasso4 = (item.status === 'concluido' && item.dataConclusaoReal) ? `CONCLUÍDO EM: ${formatarDataBR(item.dataConclusaoReal)}` : statusTexto;
+
+            let stepperClasse = 'stepper';
+            if (item.status === 'concluido') {
+                stepperClasse += ' progresso-3';
+            } else if (atrasada) {
+                stepperClasse += ' atrasado';
+            } else if (item.dataConclusaoPrazo && item.validor) {
+                stepperClasse += ' progresso-2';
+            } else if (item.validor || item.status === 'aprovado') {
+                stepperClasse += ' progresso-1';
+            }
+
+            return `
+                <div class="${stepperClasse}" style="margin: 15px 0 5px 0; font-size: 0.7rem;">
+                    <div class="step completed"><div class="step-circle">✓</div><div class="step-label">CRIADA POR: ${item.nome}</div></div>
+                    <div class="step ${item.validor ? 'completed' : ''}"><div class="step-circle">${item.validor ? '✓' : '2'}</div><div class="step-label">VALIDADO POR: ${item.validor || 'PENDENTE'}</div></div>
+                    <div class="step ${corCirculoResolutiva}"><div class="step-circle">${simboloResolutiva}</div><div class="step-label">${dataFormatadaExibida}${historicoLabel}</div></div>
+                    <div class="step ${item.status === 'concluido' ? 'completed' : (atrasada ? 'danger' : 'active')}"><div class="step-circle">${item.status === 'concluido' ? '✓' : '4'}</div><div class="step-label" style="color: ${corStatus}; font-weight: bold;">${labelPasso4}</div></div>
+                </div>
+            `;
+        }
+
+        function gerarStepperHtml(status, validor, item) {
+            let atrasada = status !== 'concluido' && verificarVencimento(item?.dataConclusaoPrazo);
+            let corResolutiva = status === 'concluido' ? 'completed' : atrasada ? 'danger' : (item?.dataConclusaoPrazo ? 'completed' : 'active');
+            let simboloResolutiva = atrasada ? 'X' : (status === 'concluido' || item?.dataConclusaoPrazo ? '✓' : '3');
+            let dataFormatadaExibida = item?.dataConclusaoPrazo ? `DATA PROG: ${formatarDataBR(item.dataConclusaoPrazo)}` : 'DATA PROGRAMADA: A DEFINIR';
+            
+            let labelPasso4 = (status === 'concluido' && item?.dataConclusaoReal) ? `CONCLUÍDO EM: ${formatarDataBR(item.dataConclusaoReal)}` : 'CONCLUÍDO';
+
+            let stepperClasse = 'stepper';
+            if (status === 'concluido') {
+                stepperClasse += ' progresso-3';
+            } else if (atrasada) {
+                stepperClasse += ' atrasado';
+            } else if (item?.dataConclusaoPrazo && validor) {
+                stepperClasse += ' progresso-2';
+            } else if (validor || status === 'aprovado') {
+                stepperClasse += ' progresso-1';
+            }
+
+            if (status === 'pendente') {
+                return `
+                    <div class="${stepperClasse}" style="margin: 15px 0 5px 0;">
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">CRIADA</div></div>
+                        <div class="step active"><div class="step-circle">2</div><div class="step-label">VALIDAÇÃO</div></div>
+                        <div class="step"><div class="step-circle">3</div><div class="step-label">DATA PROGRAMADA</div></div>
+                        <div class="step"><div class="step-circle">4</div><div class="step-label">EXECUÇÃO</div></div>
+                    </div>`;
+            } else if (status === 'aprovado') {
+                return `
+                    <div class="${stepperClasse}" style="margin: 15px 0 5px 0;">
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">CRIADA</div></div>
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">VALIDADO</div></div>
+                        <div class="step ${corResolutiva}"><div class="step-circle">${simboloResolutiva}</div><div class="step-label">${atrasada ? 'ATRASADA (X)' : dataFormatadaExibida}</div></div>
+                        <div class="step ${atrasada ? 'danger' : 'active'}"><div class="step-circle">4</div><div class="step-label" style="color:${atrasada ? 'var(--danger)' : 'var(--pending)'};">${atrasada ? 'ATRASADA' : 'EXECUÇÃO'}</div></div>
+                    </div>`;
+            } else {
+                return `
+                    <div class="${stepperClasse}" style="margin: 15px 0 5px 0;">
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">CRIADA</div></div>
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">VALIDADO</div></div>
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label">${dataFormatadaExibida}</div></div>
+                        <div class="step completed"><div class="step-circle">✓</div><div class="step-label" style="color:var(--success); font-weight:bold;">${labelPasso4}</div></div>
+                    </div>`;
+            }
+        }
+
+        let expansoesCartoes = {};
+
+        function toggleExpandirCard(id) {
+            expansoesCartoes[id] = !expansoesCartoes[id];
+            renderizarTelas();
+        }
+
+        function toggleMinimizarUsuarioCard(id) {
+            minimizacoesUsuarioState[id] = !minimizacoesUsuarioState[id];
+            renderizarTelas();
+        }
+
+        function toggleMinimizarAprovada(id) {
+            minimizacoesAprovadasState[id] = !minimizacoesAprovadasState[id];
+            renderizarAprovadasGestor();
+        }
+
+        // FUNÇÃO OTIMIZADA COM LOADING IMEDIATO
+        function toggleExpandirSetor(nomeSetor) {
+            const loader = document.getElementById('loadingIndicator');
+            if (loader) loader.style.display = 'block';
+
+            setTimeout(() => {
+                estadosAcordeonSetor[nomeSetor] = !estadosAcordeonSetor[nomeSetor];
+                renderizarTelas();
+            }, 10);
+        }
+
+        // FUNÇÃO OTIMIZADA COM LOADING IMEDIATO
+        function toggleAcordeonRespNoSetor(idAccordion) {
+            const loader = document.getElementById('loadingIndicator');
+            if (loader) loader.style.display = 'block';
+
+            setTimeout(() => {
+                estadosAcordeonRespNoSetor[idAccordion] = !estadosAcordeonRespNoSetor[idAccordion];
+                renderizarTelas();
+            }, 10);
+        }
+
+        function abrirGraficoLocalModal(nomeLocal) {
+            localAtualModalGrafico = nomeLocal;
+            document.getElementById('tituloModalGraficoLocal').innerText = `📊 Evolução Mensal e Anual - Fábrica: ${nomeLocal}`;
+            document.getElementById('tipoVisaoGraficoLocal').value = 'mes';
+            document.getElementById('modalGraficoLocal').style.display = 'flex';
+            atualizarGraficoLocalModal();
+        }
+
+        function fecharModalGraficoLocal() {
+            document.getElementById('modalGraficoLocal').style.display = 'none';
+        }
+
+        function atualizarGraficoLocalModal() {
+            const tipoVisao = document.getElementById('tipoVisaoGraficoLocal').value;
+            const ctx = document.getElementById('canvasGraficoLocalModal').getContext('2d');
+
+            let acoesDoLocal = ocorrencias.filter(x => x.local === localAtualModalGrafico && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
+
+            let labels = [];
+            let dadosConcluidos = [];
+            let dadosPendentes = [];
+            let dadosVencidas = [];
+
+            if (tipoVisao === 'mes') {
+                labels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+                let codigosMes = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+                
+                dadosConcluidos = codigosMes.map(m => acoesDoLocal.filter(x => x.mes === m && x.status === 'concluido').length);
+                dadosPendentes = codigosMes.map(m => acoesDoLocal.filter(x => x.mes === m && x.status !== 'concluido' && !verificarVencimento(x.dataConclusaoPrazo)).length);
+                dadosVencidas = codigosMes.map(m => acoesDoLocal.filter(x => x.mes === m && x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length);
+            } else {
+                labels = ['2025', '2026', '2027'];
+                let codigosAno = ['2025', '2026', '2027'];
+
+                dadosConcluidos = codigosAno.map(a => acoesDoLocal.filter(x => x.ano === a && x.status === 'concluido').length);
+                dadosPendentes = codigosAno.map(a => acoesDoLocal.filter(x => x.ano === a && x.status !== 'concluido' && !verificarVencimento(x.dataConclusaoPrazo)).length);
+                dadosVencidas = codigosAno.map(a => acoesDoLocal.filter(x => x.ano === a && x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length);
+            }
+
+            if (chartLocalModalInstance) chartLocalModalInstance.destroy();
+
+            chartLocalModalInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        { label: 'Concluídas', data: dadosConcluidos, backgroundColor: '#006837' },
+                        { label: 'Pendentes', data: dadosPendentes, backgroundColor: '#d4af37' },
+                        { label: 'Vencidas', data: dadosVencidas, backgroundColor: '#c51b24' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: {
+                        padding: { top: 20, bottom: 5, left: 5, right: 5 }
+                    },
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        datalabels: {
+                            display: true,
+                            color: '#1f2937',
+                            font: { weight: 'bold', size: 10 },
+                            anchor: 'end',
+                            align: 'top',
+                            formatter: (val) => val > 0 ? val : ''
+                        }
+                    },
+                    scales: {
+                        y: { 
+                            beginAtZero: true, 
+                            ticks: { stepSize: 1 },
+                            suggestedMax: 3
+                        }
+                    }
+                }
+            });
+        }
+
+        function abrirDetalhes(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (!item) return;
+
+            let fotosRenderizadas = '';
+            if (item.foto) {
+                fotosRenderizadas += `<div class="photo-wrapper"><span>FOTO</span><img src="${item.foto}" class="photo-box" onclick="abrirZoomImg('${item.foto}')"><div class="photo-timestamp">${item.timestampFotoAntes || ''}</div></div>`;
+            }
+            if (item.fotoConclusao) {
+                fotosRenderizadas += `<div class="photo-wrapper"><span>DEPOIS</span><img src="${item.fotoConclusao}" class="photo-box" onclick="abrirZoomImg('${item.fotoConclusao}')"><div class="photo-timestamp">${item.timestampFotoDepois || ''}</div></div>`;
+            }
+            if (!item.foto && !item.fotoConclusao) {
+                fotosRenderizadas = '<p style="color:var(--text-muted); font-size:0.8rem; font-style:italic;">Nenhum registro fotográfico.</p>';
+            }
+            
+            let gravClass = item.gravidade === 'MÉDIA' ? 'gravidade-media' : item.gravidade === 'ALTA' ? 'gravidade-alta' : 'gravidade-baixa';
+            let stepper = item.tipoOcorrencia === 'Incidente' ? '' : gerarStepperHtml(item.status, item.validor, item);
+            let alertaV = (item.status !== 'concluido' && verificarVencimento(item.dataConclusaoPrazo)) ? ' <span style="color:var(--danger);font-weight:bold;">⚠️ VENCIDA</span>' : '';
+            
+            let statusConclusaoInfo = '';
+            if (item.status === 'concluido') {
+                let diasAtraso = calcularDiasAtrasoReal(item.dataConclusaoPrazo, item.dataConclusaoReal);
+                if (diasAtraso > 0) {
+                    statusConclusaoInfo = `<div style="margin-top: 4px;"><strong style="color:var(--danger);">Status:</strong> Concluído com ${diasAtraso} dia(s) de atraso. (${formatarDataBR(item.dataConclusaoReal)})</div>`;
+                } else {
+                    statusConclusaoInfo = `<div style="margin-top: 4px;"><strong style="color:var(--success);">Status:</strong> Concluído no prazo! (${formatarDataBR(item.dataConclusaoReal)})</div>`;
+                }
+            }
+
+            let avisoRevertidoInfo = item.revertido ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:8px; border-radius:6px; font-size:0.8rem; font-weight:bold; margin-bottom:8px;">⚠️ AVISO: Ação revogada e pendente de revisão!</div>` : '';
+
+            let diasRestantesStr = '';
+            if (item.status !== 'concluido' && item.dataConclusaoPrazo) {
+                let dias = calcularDiasRestantes(item.dataConclusaoPrazo);
+                if (dias > 0) {
+                    diasRestantesStr = `<div><strong>Tempo:</strong> Faltam ${dias} dia(s) para vencer.</div>`;
+                } else if (dias === 0) {
+                    diasRestantesStr = `<div><strong style="color:var(--pending);">Tempo: Vence HOJE!</strong></div>`;
+                } else {
+                    diasRestantesStr = `<div><strong style="color:var(--danger);">Tempo: Vencida há ${Math.abs(dias)} dia(s).</strong></div>`;
+                }
+            }
+
+            let historicoArr = item.historicoAlteracoes || [];
+            let qtdAlt = historicoArr.length;
+            let historicoHtml = '';
+            if (qtdAlt > 0) {
+                historicoHtml = `
+                    <div style="background: #fef3c7; border: 1px solid var(--pending); padding: 8px; border-radius: 6px; margin-top: 6px; font-size: 0.8rem; color: #92400e;">
+                        ⚠️ <strong>Prazos Prorrogados (${qtdAlt}x):</strong><br>
+                        ${historicoArr.join('<br>')}
+                    </div>
+                `;
+            }
+
+            let acidenteDetalhe = (item.acaoAcidenteVinculado || item.numAcidente) ? `
+                <div style="background: #fef2f2; border: 1px solid var(--danger); padding: 8px; border-radius: 6px; margin-top: 8px; font-size: 0.8rem; color: #991b1b;">
+                    🚨 <strong>Acidente:</strong> ${item.acaoAcidenteVinculado || 'N/A'} | <strong>Nº:</strong> ${item.numAcidente || 'N/A'}
+                </div>
+            ` : '';
+
+            document.getElementById('conteudoDetalheModal').innerHTML = `
+                ${avisoRevertidoInfo}
+                <div style="background: #f3f4f6; padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                    <div><span class="badge-ticket">${item.ticket}</span> <strong>${item.local}</strong> / <strong>${item.setor}</strong> <span style="font-size:0.75rem; background:#e5e7eb; padding:2px 6px; border-radius:4px; margin-left:4px;">${item.tipoOcorrencia || 'Condicao Insegura'}</span></div>
+                    <div>${item.status !== 'pendente' && item.tipoOcorrencia !== 'Incidente' ? `<span class="badge-gravidade ${gravClass}">${item.gravidade}</span>` : ''}</div>
+                </div>
+
+                ${stepper}
+
+                <div style="background: #f9fafb; padding: 10px; border-radius: 6px; border: 1px solid #e5e7eb; display: flex; flex-direction: column; gap: 4px;">
+                    <div><strong>Registrado por:</strong> ${item.criador || item.nome}</div>
+                    ${item.tipoOcorrencia !== 'Incidente' ? `<div><strong>Validado por:</strong> ${item.validor || 'PENDENTE'}</div>` : ''}
+                    ${item.tipoOcorrencia !== 'Incidente' ? `<div><strong>Responsável:</strong> ${item.responsavel || 'NÃO ATRIBUÍDO'}</div>` : ''}
+                    <div><strong>Descrição / Texto:</strong> ${item.desc}</div>
+                    ${item.tipoOcorrencia !== 'Incidente' ? `<div><strong>Prazo:</strong> ${formatarDataBR(item.dataConclusaoPrazo) || 'A DEFINIR'} ${alertaV}</div>` : ''}
+                    ${diasRestantesStr}
+                    ${statusConclusaoInfo}
+                </div>
+
+                ${acidenteDetalhe}
+                ${historicoHtml}
+
+                <div style="margin-top: 4px;">
+                    <strong style="font-size: 0.85rem; display: block; margin-bottom: 4px;">Registros Fotográficos:</strong>
+                    <div class="photos-container">${fotosRenderizadas}</div>
+                </div>
+            `;
+            document.getElementById('modalDetalhe').style.display = 'flex';
+        }
+
+        function fecharModal() {
+            document.getElementById('modalDetalhe').style.display = 'none';
+        }
+
+        function reverterConclusao(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (!item) return;
+            item.status = 'aprovado';
+            item.revertido = true;
+            window.fbSalvarOcorrencia(item);
+            alert("Ação revogada com sucesso! Retornou para execução ativa e desbloqueada para modificações.");
+        }
+
+        function renderizarTelas() {
+            const loader = document.getElementById('loadingIndicator');
+            if (loader) loader.style.display = 'block';
+
+            setTimeout(() => {
+                const tagsDiv = document.getElementById('tagsGestoresCadastrados');
+                if (tagsDiv) {
+                    tagsDiv.innerHTML = listaGestores.map(g => `<span class="chip-gestor">👤 ${g.nome} ${g.fone ? '📞('+g.fone+')' : ''} <button onclick="removerGestor('${g.nome}')">×</button></span>`).join('');
+                }
+
+                const selectRespSetor = document.getElementById('novoSetorResponsavel');
+                if (selectRespSetor) {
+                    selectRespSetor.innerHTML = '<option value="">Selecione o Responsável...</option>' + listaGestores.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
+                }
+
+                const selectLocalUsuario = document.getElementById('localUsuario');
+                if (selectLocalUsuario) {
+                    let localUsuarioAtual = selectLocalUsuario.value;
+                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    selectLocalUsuario.innerHTML = '<option value="">Selecione a Fábrica...</option>' + locaisUnicosCadastrados.map(loc => `<option value="${loc}">${loc}</option>`).join('');
+                    selectLocalUsuario.value = localUsuarioAtual;
+                }
+
+                const tagsSetoresDiv = document.getElementById('tagsSetoresCadastrados');
+                if (tagsSetoresDiv) {
+                    tagsSetoresDiv.innerHTML = listaSetoresCadastrados.map(s => `<span class="chip-setor">📍 ${s.nome} (${s.responsavel}) <button onclick="removerSetor('${s.nome}', '${s.responsavel}')">×</button></span>`).join('');
+                }
+
+                const selectPessoa = document.getElementById('filtroGlobalPessoa');
+                if (selectPessoa) {
+                    let pessoaSelecionadaAtual = selectPessoa.value;
+                    selectPessoa.innerHTML = '<option value="todos">👤 Todos os Responsáveis</option>' + listaGestores.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
+                    selectPessoa.value = pessoaSelecionadaAtual;
+                }
+
+                const selectFabricaInc = document.getElementById('filtroFabricaIncidentes');
+                if (selectFabricaInc) {
+                    let fabricaAtual = selectFabricaInc.value;
+                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    selectFabricaInc.innerHTML = '<option value="todos">🏭 Todas as Fábricas</option>' + locaisUnicosCadastrados.map(loc => `<option value="${loc}">${loc}</option>`).join('');
+                    selectFabricaInc.value = fabricaAtual;
+                }
+
+                const fPessoa = document.getElementById('filtroGlobalPessoa') ? document.getElementById('filtroGlobalPessoa').value : 'todos';
+                const fMes = document.getElementById('filtroGlobalMes') ? document.getElementById('filtroGlobalMes').value : 'todos';
+                const fAno = document.getElementById('filtroGlobalAno') ? document.getElementById('filtroGlobalAno').value : 'todos';
+                const fGravidade = document.getElementById('filtroGlobalGravidade') ? document.getElementById('filtroGlobalGravidade').value : 'todos';
+
+                let ocorrenciasFiltradas = ocorrencias.filter(item => {
+                    if (item.tipoOcorrencia === 'Incidente') return false; 
+                    let matchPessoa = fPessoa === 'todos' || item.responsavel === fPessoa;
+                    let matchMes = fMes === 'todos' || item.mes === fMes;
+                    let matchAno = fAno === 'todos' || item.ano === fAno;
+                    let matchGravidade = fGravidade === 'todos' || item.gravidade === fGravidade;
+                    return matchPessoa && matchMes && matchAno && matchGravidade;
+                });
+
+                atualizarIndicadores(ocorrenciasFiltradas);
+
+                const abaUsuarioAtiva = document.getElementById('aba-usuario')?.classList.contains('active');
+                const abaGestorAtiva = document.getElementById('aba-gestor')?.classList.contains('active');
+
+                const containerSetores = document.getElementById('listaSetoresUsuario');
+                if (containerSetores && abaUsuarioAtiva) {
+                    containerSetores.innerHTML = '';
+
+                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    if (locaisUnicosCadastrados.length === 0) {
+                        containerSetores.innerHTML = '<p style="text-align:center; color:var(--text-muted); font-size:0.85rem;">Nenhuma fábrica cadastrada. Cadastre na aba de Gestão.</p>';
+                    } else {
+                        locaisUnicosCadastrados.forEach(nomeLocal => {
+                            let respDoLocalObjList = listaSetoresCadastrados.filter(s => s.nome.toLowerCase() === nomeLocal.toLowerCase());
+                            let gestoresDoLocal = respDoLocalObjList.map(s => s.responsavel);
+
+                            if (fPessoa !== 'todos' && !gestoresDoLocal.includes(fPessoa)) return;
+
+                            let acoesLocal = ocorrenciasFiltradas.filter(x => x.local === nomeLocal);
+
+                            if (!filtrosSetor[nomeLocal]) {
+                                filtrosSetor[nomeLocal] = { status: 'todos', buscaSetor: '' };
+                            }
+
+                            let subStatus = filtrosSetor[nomeLocal].status;
+                            let buscaSetorVal = (filtrosSetor[nomeLocal].buscaSetor || '').toUpperCase();
+
+                            if (subStatus === 'pendente') {
+                                acoesLocal = acoesLocal.filter(x => x.status !== 'concluido');
+                            } else if (subStatus === 'vencida') {
+                                acoesLocal = acoesLocal.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo));
+                            } else if (subStatus === 'concluido') {
+                                acoesLocal = acoesLocal.filter(x => x.status === 'concluido');
+                            }
+
+                            if (buscaSetorVal) {
+                                acoesLocal = acoesLocal.filter(x => x.setor && x.setor.includes(buscaSetorVal));
+                            }
+
+                            let totalLocal = acoesLocal.length;
+                            let concluidasLocal = acoesLocal.filter(x => x.status === 'concluido').length;
+                            let pendentesLocal = acoesLocal.filter(x => x.status !== 'concluido').length;
+                            let vencidasLocal = acoesLocal.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length;
+
+                            let indicadorBom = concluidasLocal >= pendentesLocal && totalLocal > 0 && vencidasLocal === 0;
+                            let dotLocalHtml = indicadorBom 
+                                ? `<span class="status-dot dot-verde" title="Regular"></span>` 
+                                : `<span class="status-dot dot-vermelha" title="Pendências"></span>`;
+
+                            let contadoresHtml = `
+                                <div class="badges-contadores">
+                                    <span class="badge-count conc">Concl: ${concluidasLocal}</span>
+                                    <span class="badge-count pend">Pend: ${pendentesLocal}</span>
+                                    <span class="badge-count atra">Venc: ${vencidasLocal}</span>
+                                </div>
+                            `;
+
+                            let conteudoInternoLocal = '';
+                            let estaAbertoLocal = estadosAcordeonSetor[nomeLocal] ? 'open' : '';
+                            
+                            respDoLocalObjList.forEach(respObj => {
+                                let respNome = respObj.responsavel;
+                                if (fPessoa !== 'todos' && respNome !== fPessoa) return;
+
+                                let acoesDoRespNoLocal = acoesLocal.filter(x => x.responsavel === respNome);
+
+                                let acoesAVencerResp = acoesDoRespNoLocal.filter(x => {
+                                    if (x.status === 'concluido' || !x.dataConclusaoPrazo) return false;
+                                    let dias = calcularDiasRestantes(x.dataConclusaoPrazo);
+                                    return dias >= 0;
+                                }).length;
+
+                                let badgeAVencerHtml = `<span style="font-size: 0.65rem; background: #fef3c7; color: #92400e; padding: 1px 5px; border-radius: 4px; font-weight: normal; margin-left: 6px;" title="Ações a vencer">A vencer: ${acoesAVencerResp}</span>`;
+
+                                let cardsRespHtml = '';
+                                let idAccordionResp = `resp-no-local-${nomeLocal}-${respNome}`.replace(/\s+/g, '-');
+                                let abertoResp = estadosAcordeonRespNoSetor[idAccordionResp] ? 'open' : '';
+
+                                if (estaAbertoLocal && abertoResp) {
+                                    if (acoesDoRespNoLocal.length === 0) {
+                                        cardsRespHtml = '<p style="font-size:0.75rem; color:var(--text-muted); padding: 4px 8px;">Nenhuma ação para este filtro.</p>';
+                                    } else {
+                                        acoesDoRespNoLocal.forEach(item => {
+                                            let isMinimizadoUser = minimizacoesUsuarioState[item.id] || false;
+                                            let btnMinimizarUserTexto = isMinimizadoUser ? '➕ Expandir' : '➖ Minimizar';
+
+                                            let isPrioridade = (item.status !== 'concluido' && (item.acaoAcidenteVinculado || item.numAcidente));
+                                            let avisoAcidenteCard = isPrioridade ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:5px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; margin-bottom:5px;">⚠️ Ocorrência de acidente pendente.</div>` : '';
+                                            let avisoRevertidoCard = item.revertido ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:5px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; margin-bottom:5px;">⚠️ Ação revogada.</div>` : '';
+                                            let avisoConcluidoBloqueio = item.status === 'concluido' ? `<div style="background:#d1fae5; border:1px solid var(--success); color:#065f46; padding:5px 8px; border-radius:6px; font-size:0.7rem; font-weight:bold; margin-bottom:5px;">🔒 Ação concluída e bloqueada.</div>` : '';
+                                            let estiloCard = isPrioridade || item.revertido ? 'background:#fef2f2; border:2px solid var(--danger);' : 'background:#f9fafb; border:1px solid #e5e7eb;';
+
+                                            let expandido = expansoesCartoes[item.id] || false;
+                                            let stepperMini = expandido ? gerarStepperAbaUsuario(item) : '';
+                                            
+                                            let miniaturaFoto = item.foto ? `<img src="${item.foto}" style="width:36px; height:36px; object-fit:cover; border-radius:6px; border:1px solid #d1d5db;" onclick="abrirZoomImg('${item.foto}'); event.stopPropagation();">` : `<span style="font-size:0.65rem; color:var(--text-muted);">Sem foto</span>`;
+
+                                            let diasRestantesInfo = '';
+                                            if (item.status !== 'concluido' && item.dataConclusaoPrazo) {
+                                                let dias = calcularDiasRestantes(item.dataConclusaoPrazo);
+                                                if (dias > 0) {
+                                                    diasRestantesInfo = `<span style="font-size:0.7rem; color:var(--text-muted); display:block; margin-top:2px;">⏳ Faltam ${dias} dia(s)</span>`;
+                                                } else if (dias === 0) {
+                                                    diasRestantesInfo = `<span style="font-size:0.7rem; color:var(--pending); font-weight:bold; display:block; margin-top:2px;">⏳ Vence HOJE!</span>`;
+                                                } else {
+                                                    diasRestantesInfo = `<span style="font-size:0.7rem; color:var(--danger); font-weight:bold; display:block; margin-top:2px;">⏳ Vencida há ${Math.abs(dias)} dia(s)</span>`;
+                                                }
+                                            }
+
+                                            let botaoAlterarPrazoUser = item.status === 'concluido' ? '' : `
+                                                <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;" onclick="event.stopPropagation()">
+                                                    <button class="btn-tool" onclick="alterarPrazoUsuario(${item.id})" style="background: #e5e7eb; color: var(--text-main); font-size: 0.7rem;">📅 Prazo</button>
+                                                    <span style="font-size: 0.7rem; color: var(--text-muted);"><strong>${formatarDataBR(item.dataConclusaoPrazo) || 'A DEFINIR'}</strong></span>
+                                                </div>
+                                            `;
+
+                                            let botaoResolverHtml = '';
+                                            if (item.status !== 'concluido') {
+                                                botaoResolverHtml = `
+                                                    <div style="margin-top:8px; padding:8px; background:#fff; border-radius:6px; border:1px dashed #d1d5db;" onclick="event.stopPropagation()">
+                                                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:3px; color:var(--success);">📥 Foto de Conclusão:</label>
+                                                        <div style="display:flex; gap:6px; align-items:center;">
+                                                            <input type="file" id="resolver-foto-${item.id}" accept="image/*" style="font-size:0.7rem; flex:1;" onchange="comprimirFotoInput(event, function(base64){ window.tempFotoConc = base64; })" required>
+                                                            <button class="btn-approve" style="background:var(--success); padding: 6px 10px; font-size:0.75rem;" onclick="resolverDireto(${item.id})">OK</button>
+                                                        </div>
+                                                    </div>
+                                                `;
+                                            }
+
+                                            let historicoArrCard = item.historicoAlteracoes || [];
+                                            let historicoResumoCard = historicoArrCard.length > 0 ? `<div style="font-size: 0.65rem; color: var(--pending); margin-top: 2px; font-weight: 600;">⚠️ Prorrogado ${historicoArrCard.length}x</div>` : '';
+
+                                            let conteudoCardUser = isMinimizadoUser ? '' : `
+                                                ${botaoAlterarPrazoUser}
+                                                ${historicoResumoCard}
+                                                ${stepperMini}
+                                                ${diasRestantesInfo}
+                                                ${botaoResolverHtml}
+                                            `;
+
+                                            cardsRespHtml += `
+                                                <div style="${estiloCard} padding:10px; border-radius:8px; margin-bottom:8px;">
+                                                    ${avisoAcidenteCard}
+                                                    ${avisoRevertidoCard}
+                                                    ${avisoConcluidoBloqueio}
+                                                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                                                        <div style="display:flex; align-items:center; gap:8px; cursor:pointer; flex:1;" onclick="toggleExpandirCard(${item.id})">
+                                                            ${miniaturaFoto}
+                                                            <div>
+                                                                <span class="badge-ticket">${item.ticket}</span>
+                                                                <p style="margin:2px 0 0 0; font-size:0.8rem; color:var(--text-main);"><strong>Setor:</strong> ${item.setor}</p>
+                                                                <p style="margin:2px 0 0 0; font-size:0.75rem; color:var(--text-muted);">${item.desc.substring(0, 35)}...</p>
+                                                            </div>
+                                                        </div>
+                                                        <div style="display:flex; gap:4px; align-items:center;">
+                                                            <button class="btn-tool" onclick="toggleMinimizarUsuarioCard(${item.id}); event.stopPropagation();">${btnMinimizarUserTexto}</button>
+                                                            <button class="btn-tool" onclick="abrirDetalhes(${item.id}); event.stopPropagation();">🔍</button>
+                                                        </div>
+                                                    </div>
+                                                    ${conteudoCardUser}
+                                                </div>
+                                            `;
+                                        });
+                                    }
+                                } else {
+                                    cardsRespHtml = '<p style="font-size:0.75rem; color:var(--text-muted); padding: 4px 8px;">Clique para expandir e carregar os registros.</p>';
+                                }
+
+                                let cConcluidasResp = acoesDoRespNoLocal.filter(x => x.status === 'concluido').length;
+                                let cPendentesResp = acoesDoRespNoLocal.filter(x => x.status !== 'concluido').length;
+                                let atrasadasRespNum = acoesDoRespNoLocal.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length;
+
+                                let bomResp = cConcluidasResp >= cPendentesResp && acoesDoRespNoLocal.length > 0 && atrasadasRespNum === 0;
+                                let svgSetaResp = bomResp
+                                    ? `<svg class="icone-seta seta-verde" viewBox="0 0 24 24"><path d="M12 4l-8 8h6v8h4v-8h6z"/></svg>` 
+                                    : `<svg class="icone-seta seta-vermelha" viewBox="0 0 24 24"><path d="M12 20l8-8h-6v-8h-4v8h-6z"/></svg>`;
+
+                                conteudoInternoLocal += `
+                                    <div class="gestor-accordion-item" style="margin: 6px 0; border: 1px solid #d1d5db;">
+                                        <div class="gestor-accordion-header" style="background: #f3f4f6; padding: 10px 12px; font-size: 0.85rem;" onclick="toggleAcordeonRespNoSetor('${idAccordionResp}')">
+                                            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                                                ${svgSetaResp}
+                                                <span><strong>${respNome}</strong> ${badgeAVencerHtml}</span>
+                                                <span style="font-size:0.7rem; background:#e5e7eb; padding:2px 6px; border-radius:6px;">C:${cConcluidasResp} | P:${cPendentesResp}</span>
+                                            </div>
+                                            <span style="font-size:0.7rem; color: var(--text-muted);">${abertoResp ? '▲' : '▼'}</span>
+                                        </div>
+                                        <div class="gestor-accordion-body ${abertoResp}" id="${idAccordionResp}">
+                                            ${cardsRespHtml}
+                                        </div>
+                                    </div>
+                                `;
+                            });
+
+                            containerSetores.innerHTML += `
+                                <div class="gestor-accordion-item">
+                                    <div class="gestor-accordion-header" onclick="toggleExpandirSetor('${nomeLocal}')">
+                                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                            <div style="display: flex; align-items: center;">
+                                                ${dotLocalHtml}
+                                                <strong style="font-size: 0.9rem;">${nomeLocal}</strong>
+                                            </div>
+                                            ${contadoresHtml}
+                                        </div>
+                                        <div style="display:flex; align-items:center; gap:6px;">
+                                            <button class="btn-tool" onclick="abrirGraficoLocalModal('${nomeLocal}'); event.stopPropagation();" style="background: var(--primary); color: white; border: none; font-size: 0.7rem; padding: 4px 8px;">📊 Gráfico</button>
+                                            <span style="font-size:0.75rem; background:#e5e7eb; padding:3px 8px; border-radius:10px; font-weight:600;">${pendentesLocal}</span>
+                                        </div>
+                                    </div>
+                                    <div class="gestor-accordion-body ${estaAbertoLocal}" id="corpo-setor-${nomeLocal}">
+                                        <div class="sub-filter-bar" onclick="event.stopPropagation()">
+                                            <div>
+                                                <label style="font-size:0.65rem; font-weight:bold; display:block; margin-bottom:2px;">Filtrar Status:</label>
+                                                <select id="sub-status-${nomeLocal}" onchange="atualizarFiltroSetor('${nomeLocal}', 'status', this.value)">
+                                                    <option value="todos" ${subStatus === 'todos' ? 'selected' : ''}>Todos Status</option>
+                                                    <option value="pendente" ${subStatus === 'pendente' ? 'selected' : ''}>Apenas Pendentes</option>
+                                                    <option value="vencida" ${subStatus === 'vencida' ? 'selected' : ''}>Apenas Vencidas</option>
+                                                    <option value="concluido" ${subStatus === 'concluido' ? 'selected' : ''}>Concluídas</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label style="font-size:0.65rem; font-weight:bold; display:block; margin-bottom:2px;">Filtrar Setor Específico:</label>
+                                                <input type="text" id="sub-busca-setor-${nomeLocal}" placeholder="Ex: Tanque 01..." value="${filtrosSetor[nomeLocal].buscaSetor || ''}" oninput="atualizarFiltroSetor('${nomeLocal}', 'buscaSetor', this.value)">
+                                            </div>
+                                        </div>
+                                        ${conteudoInternoLocal}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                }
+
+                const cGestorPendentes = document.getElementById('listaGestorPendentes');
+                if (cGestorPendentes && abaGestorAtiva) {
+                    cGestorPendentes.innerHTML = '';
+
+                    let listaPendentes = ocorrencias.filter(item => item.status === 'pendente' && (!item.tipoOcorrencia || item.tipoOcorrencia === 'Condicao Insegura'));
+
+                    if (listaPendentes.length === 0) {
+                        cGestorPendentes.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding: 15px; font-size:0.85rem;">Nenhuma ocorrência pendente de validação. 🎉</p>';
+                    } else {
+                        listaPendentes.forEach(item => {
+                            let fotoPreview = item.foto ? `
+                                <div style="position:relative; display:inline-block; margin-bottom:6px;">
+                                    <img src="${item.foto}" class="photo-box" onclick="abrirZoomImg('${item.foto}')">
+                                    <div class="photo-timestamp">${item.timestampFotoAntes || ''}</div>
+                                </div><br><span style="font-size:0.65rem;color:var(--text-muted);">Foto atual</span>
+                            ` : `<span style="font-size:0.7rem;color:var(--text-muted);">Sem foto enviada.</span>`;
+                            
+                            let stepper = gerarStepperHtml(item.status, item.validor, item);
+                            let optionsGestores = listaGestores.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
+
+                            const cardG = document.createElement('div');
+                            cardG.className = 'occurrence-card';
+                            cardG.innerHTML = `
+                                <div class="card-actions-top">
+                                    <button class="btn-tool delete" onclick="excluir(${item.id})">🗑️ Excluir</button>
+                                </div>
+                                <div class="user-info-tag"><span class="badge-ticket">${item.ticket}</span> Criada por: <strong>${item.criador || item.nome}</strong><br>Fábrica: <strong>${item.local}</strong> | Setor: <strong>${item.setor}</strong></div>
+                                ${stepper}
+                                <p style="font-weight:600; font-size:0.85rem;">Descrição: ${item.desc}</p>
+                                <div style="margin-top:8px;">
+                                    ${fotoPreview}
+                                    <div style="margin-top:6px;">
+                                        <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Substituir / Adicionar Foto:</label>
+                                        <input type="file" id="fotoSubstituir-${item.id}" accept="image/*" style="font-size:0.7rem;" onchange="comprimirFotoInput(event, function(base64){ window.tempFotoSubst = base64; })">
+                                    </div>
+                                </div>
+                                <div class="approval-box" style="margin-top:10px;">
+                                    <div class="approval-grid">
+                                        <input type="text" id="validor-${item.id}" placeholder="Quem validou?">
+                                        <select id="resp-${item.id}">
+                                            <option value="">Selecione o Responsável...</option>
+                                            ${optionsGestores}
+                                        </select>
+                                    </div>
+                                    <div class="approval-grid" style="margin-top:6px;">
+                                        <select id="grav-${item.id}">
+                                            <option value="BAIXA">Gravidade: Baixa</option>
+                                            <option value="MÉDIA">Gravidade: Média</option>
+                                            <option value="ALTA">Gravidade: Alta</option>
+                                        </select>
+                                        <input type="text" id="acaoAcidente-${item.id}" placeholder="Ação de Acidente Vinculado">
+                                    </div>
+                                    <div class="approval-grid-bottom" style="margin-top: 8px;">
+                                        <input type="date" id="prazo-${item.id}" title="Prazo Limite">
+                                        <input type="text" id="numAcidente-${item.id}" placeholder="Nº de Acidente">
+                                        <button class="btn-approve" onclick="aprovar(${item.id})">Validar e Atribuir</button>
+                                    </div>
+                                </div>
+                            `;
+                            cGestorPendentes.appendChild(cardG);
+                        });
+                    }
+                }
+
+                if (loader) loader.style.display = 'none';
+            }, 30);
+        }
+
+        function renderizarIncidentesGestor() {
+            const cIncidentes = document.getElementById('listaGestorIncidentes');
+            if (!cIncidentes) return;
+            cIncidentes.innerHTML = '';
+
+            const buscaInc = document.getElementById('filtroBuscaIncidentes') ? document.getElementById('filtroBuscaIncidentes').value.toLowerCase() : '';
+            const mesInc = document.getElementById('filtroMesIncidentes') ? document.getElementById('filtroMesIncidentes').value : 'todos';
+            const anoInc = document.getElementById('filtroAnoIncidentes') ? document.getElementById('filtroAnoIncidentes').value : 'todos';
+            const fabricaInc = document.getElementById('filtroFabricaIncidentes') ? document.getElementById('filtroFabricaIncidentes').value : 'todos';
+
+            let listaInc = ocorrencias.filter(item => {
+                if (item.tipoOcorrencia !== 'Incidente') return false;
+
+                let matchBusca = item.ticket.toLowerCase().includes(buscaInc) || 
+                                 (item.desc && item.desc.toLowerCase().includes(buscaInc)) || 
+                                 (item.criador && item.criador.toLowerCase().includes(buscaInc)) ||
+                                 (item.setor && item.setor.toLowerCase().includes(buscaInc));
+
+                let matchMes = mesInc === 'todos' || item.mes === mesInc;
+                let matchAno = anoInc === 'todos' || item.ano === anoInc;
+                let matchFabrica = fabricaInc === 'todos' || item.local === fabricaInc;
+
+                return matchBusca && matchMes && matchAno && matchFabrica;
+            });
+
+            if (listaInc.length === 0) {
+                cIncidentes.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding: 15px; font-size:0.85rem;">Nenhum incidente encontrado com os filtros selecionados.</p>';
+                return;
+            }
+
+            listaInc.forEach(item => {
+                let fotoHtml = item.foto ? `
+                    <div style="position:relative; display:inline-block; margin-top:8px;">
+                        <img src="${item.foto}" class="photo-box" onclick="abrirZoomImg('${item.foto}')">
+                        <div class="photo-timestamp">${item.timestampFotoAntes || ''}</div>
+                    </div>
+                ` : '<span style="font-size:0.75rem; color:var(--text-muted);">Sem foto registrada.</span>';
+
+                const cardInc = document.createElement('div');
+                cardInc.className = 'occurrence-card';
+                cardInc.style.borderLeft = '4px solid var(--danger)';
+                cardInc.innerHTML = `
+                    <div class="card-actions-top" style="display:flex; gap:6px; justify-content:flex-end;">
+                        <button class="btn-tool" onclick="converterIncidenteParaAcao(${item.id})" style="background: var(--primary); color: white; border: none; font-size: 0.75rem;">🔄 Converter em Ação</button>
+                        <button class="btn-tool delete" onclick="excluir(${item.id})">🗑️ Excluir</button>
+                    </div>
+                    <div class="user-info-tag">
+                        <span class="badge-ticket" style="background:var(--danger);">${item.ticket}</span> 
+                        Registrado por: <strong>${item.criador || item.nome}</strong> | Data: <strong>${formatarDataBR(item.dataCriacao)}</strong><br>
+                        Fábrica: <strong>${item.local}</strong> | Setor: <strong>${item.setor}</strong>
+                    </div>
+                    <p style="font-weight:600; font-size:0.9rem; color:var(--text-main); margin-bottom: 6px;">Texto do Incidente:</p>
+                    <div style="background: #fdf2f2; border: 1px solid #fca5a5; padding: 12px; border-radius: 8px; font-size: 0.85rem; color: #7f1d1d; white-space: pre-wrap; word-break: break-word;">${item.desc}</div>
+                    <div style="margin-top: 10px;">
+                        ${fotoHtml}
+                    </div>
+                    <div style="margin-top: 12px; text-align: right;">
+                        <button class="btn-tool" onclick="abrirDetalhes(${item.id})">🔍 Ver Detalhes Completos</button>
+                    </div>
+                `;
+                cIncidentes.appendChild(cardInc);
+            });
+        }
+
+        function renderizarAprovadasGestor() {
+            const cAprovadas = document.getElementById('listaGestorAprovadas');
+            if (!cAprovadas) return;
+            cAprovadas.innerHTML = '';
+
+            const busca = document.getElementById('filtroBuscaAprovadas') ? document.getElementById('filtroBuscaAprovadas').value.toLowerCase() : '';
+            const mesFiltro = document.getElementById('filtroMesAprovadas') ? document.getElementById('filtroMesAprovadas').value : 'todos';
+            const statusFiltro = document.getElementById('filtroStatusAprovadas') ? document.getElementById('filtroStatusAprovadas').value : 'todos';
+            const ocultarConc = document.getElementById('ocultarConcluidas') ? document.getElementById('ocultarConcluidas').checked : false;
+
+            let listaAprovadas = ocorrencias.filter(item => {
+                if (item.tipoOcorrencia === 'Incidente') return false;
+                if (item.status === 'pendente') return false;
+                if (ocultarConc && item.status === 'concluido') return false;
+
+                let matchBusca = item.ticket.toLowerCase().includes(busca) || item.desc.toLowerCase().includes(busca) || item.responsavel.toLowerCase().includes(busca) || item.local.toLowerCase().includes(busca) || item.setor.toLowerCase().includes(busca) || item.nome.toLowerCase().includes(busca);
+                let matchMes = mesFiltro === 'todos' || item.mes === mesFiltro;
+                let isVencida = item.status !== 'concluido' && verificarVencimento(item.dataConclusaoPrazo);
+                
+                let matchStatus = true;
+                if (statusFiltro === 'aprovado') matchStatus = item.status === 'aprovado';
+                if (statusFiltro === 'vencida') matchStatus = isVencida;
+                if (statusFiltro === 'concluido') matchStatus = item.status === 'concluido';
+
+                return matchBusca && matchMes && matchStatus;
+            });
+
+            listaAprovadas.sort((a, b) => {
+                let aPrioridade = (a.status !== 'concluido' && (a.acaoAcidenteVinculado || a.numAcidente)) ? 0 : 1;
+                let bPrioridade = (b.status !== 'concluido' && (b.acaoAcidenteVinculado || b.numAcidente)) ? 0 : 1;
+                if (aPrioridade !== bPrioridade) return aPrioridade - bPrioridade;
+                const pesoGravidade = { 'ALTA': 1, 'MÉDIA': 2, 'BAIXA': 3 };
+                return (pesoGravidade[a.gravidade] || 3) - (pesoGravidade[b.gravidade] || 3);
+            });
+
+            if (listaAprovadas.length === 0) {
+                cAprovadas.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding: 15px; font-size:0.85rem;">Nenhuma ação encontrada.</p>';
+                return;
+            }
+
+            listaAprovadas.forEach(item => {
+                let isMinimizado = minimizacoesAprovadasState[item.id] || false;
+                let btnMinimizarTexto = isMinimizado ? '➕ Expandir' : '➖ Minimizar';
+
+                let gravClass = item.gravidade === 'MÉDIA' ? 'gravidade-media' : item.gravidade === 'ALTA' ? 'gravidade-alta' : 'gravidade-baixa';
+                let alertaV = (item.status !== 'concluido' && verificarVencimento(item.dataConclusaoPrazo)) ? ' <span style="color:var(--danger);font-weight:bold;">⚠️ VENCIDA</span>' : '';
+                let dataProgExibida = item.dataConclusaoPrazo ? formatarDataBR(item.dataConclusaoPrazo) : 'A definir';
+
+                let isPrioridade = (item.status !== 'concluido' && (item.acaoAcidenteVinculado || item.numAcidente));
+                let avisoAcidenteCard = isPrioridade ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:6px 10px; border-radius:6px; font-size:0.75rem; font-weight:bold; margin-bottom:8px;">⚠️ Ocorrência de acidente pendente de conclusão.</div>` : '';
+                let avisoRevertidoCard = item.revertido ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:6px 10px; border-radius:6px; font-size:0.75rem; font-weight:bold; margin-bottom:8px;">⚠️ Ação revogada. Pendente de revisão.</div>` : '';
+                let avisoConcluidoCard = item.status === 'concluido' ? `<div style="background:#d1fae5; border:1px solid var(--success); color:#065f46; padding:6px 10px; border-radius:6px; font-size:0.75rem; font-weight:bold; margin-bottom:8px;">🔒 Ação concluída e bloqueada para edições.</div>` : '';
+                let classeCard = isPrioridade || item.revertido ? 'occurrence-card priority-accident' : 'occurrence-card';
+
+                let wppEnviado = item.whatsappEnviado === true;
+                let textoWpp = wppEnviado ? '✅ WhatsApp Enviado' : `📲 WhatsApp (${item.responsavel})`;
+                let estiloWpp = wppEnviado ? 'background:#059669; color:white; border:none; font-size:0.75rem; padding: 6px 10px;' : 'background:#25d366; color:white; border:none; font-size:0.75rem; padding: 6px 10px;';
+                let botaoWppGestor = item.responsavel ? `<button class="btn-tool" onclick="enviarWhatsApp(${item.id})" style="${estiloWpp}">${textoWpp}</button>` : '';
+
+                const cardA = document.createElement('div');
+                cardA.className = classeCard;
+
+                if (isMinimizado) {
+                    cardA.innerHTML = `
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+                            <div>
+                                <span class="badge-ticket">${item.ticket}</span>
+                                <strong style="color:var(--primary); font-size:0.85rem;">${item.local} / ${item.setor}</strong>
+                                <span style="font-size:0.75rem; color:var(--text-muted); display:block;">(Resp: ${item.responsavel})</span>
+                            </div>
+                            <div style="display:flex; gap:4px; align-items:center;">
+                                ${botaoWppGestor}
+                                <button class="btn-tool" onclick="toggleMinimizarAprovada(${item.id})">${btnMinimizarTexto}</button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    let fotoHtml = item.foto ? `<div class="photo-wrapper"><span>Foto</span><img src="${item.foto}" class="photo-box" onclick="abrirZoomImg('${item.foto}')"><div class="photo-timestamp">${item.timestampFotoAntes || ''}</div></div>` : `<div class="photo-wrapper"><span>Foto</span><div class="photo-box" style="display:flex;align-items:center;justify-content:center;font-size:0.65rem;color:#4b5563;">Sem foto</div></div>`;
+                    let fotoConcHtml = item.fotoConclusao ? `<div class="photo-wrapper"><span>Depois</span><img src="${item.fotoConclusao}" class="photo-box" onclick="abrirZoomImg('${item.fotoConclusao}')"><div class="photo-timestamp">${item.timestampFotoDepois || ''}</div></div>` : `<div class="photo-wrapper"><span>Depois</span><div class="photo-box" style="display:flex;align-items:center;justify-content:center;font-size:0.65rem;color:#4b5563;">Pendente</div></div>`;
+                    let stepper = gerarStepperHtml(item.status, item.validor, item);
+                    let historicoArrItem = item.historicoAlteracoes || [];
+                    let historicoResumo = historicoArrItem.length > 0 ? `<br><span style="font-size: 0.7rem; color: var(--pending); font-weight: bold;">⚠ Histórico: ${historicoArrItem.join(' | ')}</span>` : '';
+
+                    let acoesAprovadaBox = '';
+                    if (item.status === 'aprovado') {
+                        acoesAprovadaBox = `
+                            <div class="approval-box" style="margin-top:10px;">
+                                <div style="font-size:0.75rem;color:#065f46;margin-bottom:6px;">
+                                    ✅ Validado por ${item.validor} | Resp: <strong>${item.responsavel}</strong><br>Prazo: ${dataProgExibida}${alertaV} ${historicoResumo}
+                                </div>
+                                <div class="approval-grid-bottom" style="gap:6px; flex-wrap:wrap;">
+                                    <button class="btn-tool" onclick="gestorModificarData(${item.id})" style="background:#e5e7eb; color:var(--text-main); padding:6px 10px;">📅 Mudar Prazo</button>
+                                    ${botaoWppGestor}
+                                    <button class="btn-approve" style="background:var(--success); flex:1; padding:6px;" onclick="concluirMobile(${item.id})">Concluir</button>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        acoesAprovadaBox = `
+                            <div class="approval-box" style="margin-top:10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                                <div style="font-size:0.8rem; color:#065f46; font-weight: 600;">🎉 Ação Concluída! (Resp: ${item.responsavel})</div>
+                                <div style="display:flex; gap:6px; align-items:center; flex-wrap: wrap;">
+                                    ${botaoWppGestor}
+                                    <button class="btn-primary" onclick="reverterConclusao(${item.id})" style="width: auto; padding: 6px 12px; font-size: 0.75rem; background: var(--pending);">↩️ Reverter Conclusão</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    let secaoGerenciarFotos = item.status === 'concluido' ? '' : `
+                        <div style="background:#f9fafb; padding:10px; border-radius:8px; margin-top:8px; border: 1px solid #e5e7eb;">
+                            <p style="font-size:0.7rem; font-weight:bold; margin:0 0 6px 0; color:var(--primary);">Gerenciar Fotos:</p>
+                            <div style="display:grid; grid-template-columns: 1fr; gap:8px;">
+                                <div>
+                                    <label style="font-size:0.65rem; font-weight:bold; display:block; margin-bottom:2px;">Substituir Foto:</label>
+                                    <input type="file" id="fotoAntes-${item.id}" accept="image/*" style="font-size:0.65rem;" onchange="atualizarFotoAntesGestor(${item.id})">
+                                </div>
+                                <div>
+                                    <label style="font-size:0.65rem; font-weight:bold; display:block; margin-bottom:2px;">Inserir Foto de Conclusão:</label>
+                                    <input type="file" id="fotoconcl-${item.id}" accept="image/*" style="font-size:0.65rem;" onchange="comprimirFotoInput(event, function(base64){ window.tempFotoConcGestor = base64; })">
+                                </div>
+                            </div>
+                        </div>
+                    `;
+
+                    cardA.innerHTML = `
+                        ${avisoAcidenteCard}
+                        ${avisoRevertidoCard}
+                        ${avisoConcluidoCard}
+                        <div class="card-actions-top">
+                            <button class="btn-tool" onclick="toggleMinimizarAprovada(${item.id})">${btnMinimizarTexto}</button>
+                            <button class="btn-tool delete" onclick="excluir(${item.id})">🗑 Excluir</button>
+                        </div>
+                        <div class="user-info-tag"><span class="badge-ticket">${item.ticket}</span> Fábrica: <strong>${item.local}</strong> | Setor: <strong>${item.setor}</strong> <span class="badge-gravidade ${gravClass}">${item.gravidade}</span></div>
+                        ${stepper}
+                        <p style="font-weight:600; font-size:0.85rem;">Descrição: ${item.desc}</p>
+                        
+                        ${secaoGerenciarFotos}
+
+                        <div class="photos-container">${fotoHtml} ${fotoConcHtml}</div>
+                        ${acoesAprovadaBox}
+                    `;
+                }
+
+                cAprovadas.appendChild(cardA);
+            });
+        }
+
+        function concluirMobile(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            
+            if (!item.foto) {
+                alert('⚠️ Validação: É obrigatório possuir a foto registrada!');
+                return;
+            }
+
+            let fotoParaUsar = window.tempFotoConcGestor || item.fotoConclusao;
+            if (!fotoParaUsar) {
+                alert('⚠️ Validação: Selecione ou tire a Foto de Conclusão antes de clicar em Concluir!');
+                return;
+            }
+
+            item.fotoConclusao = fotoParaUsar;
+            item.timestampFotoDepois = gerarTimestampCarimbo();
+            item.dataConclusaoReal = new Date().toISOString().split('T')[0];
+            item.status = 'concluido';
+            window.tempFotoConcGestor = null;
+            window.fbSalvarOcorrencia(item);
+            alert('Ação concluída com sucesso! Agora ela está bloqueada para modificações.');
+        }
+
+        function atualizarFotoAntesGestor(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (item.status === 'concluido') {
+                alert("⚠️ Ação concluída! Reverta a conclusão para alterar as fotos.");
+                return;
+            }
+            const input = document.getElementById(`fotoAntes-${id}`);
+            if (input.files.length > 0) {
+                comprimirFotoInput({ target: { files: input.files } }, function(base64) {
+                    item.foto = base64;
+                    item.timestampFotoAntes = gerarTimestampCarimbo();
+                    window.fbSalvarOcorrencia(item);
+                    renderizarAprovadasGestor();
+                    alert("Foto atualizada com sucesso!");
+                });
+            }
+        }
+
+        function renderizarModificarGestor() {
+            const cModificar = document.getElementById('listaGestorModificar');
+            if (!cModificar) return;
+            cModificar.innerHTML = '';
+
+            const buscaMod = document.getElementById('filtroBuscaModificar') ? document.getElementById('filtroBuscaModificar').value.toLowerCase() : '';
+            const statusMod = document.getElementById('filtroStatusModificar') ? document.getElementById('filtroStatusModificar').value : 'todos';
+            const acidenteMod = document.getElementById('filtroAcidenteModificar') ? document.getElementById('filtroAcidenteModificar').value : 'todos';
+
+            let listaModificar = ocorrencias.filter(item => {
+                if (item.tipoOcorrencia === 'Incidente') return false;
+                let matchBusca = item.ticket.toLowerCase().includes(buscaMod) || item.local.toLowerCase().includes(buscaMod) || item.setor.toLowerCase().includes(buscaMod) || item.desc.toLowerCase().includes(buscaMod) || (item.acaoAcidenteVinculado && item.acaoAcidenteVinculado.toLowerCase().includes(buscaMod));
+                
+                let matchStatus = true;
+                if (statusMod === 'abertas') matchStatus = item.status !== 'concluido';
+                if (statusMod === 'concluidas') matchStatus = item.status === 'concluido';
+
+                let matchAcidente = true;
+                if (acidenteMod === 'com') matchAcidente = (item.acaoAcidenteVinculado || item.numAcidente);
+                if (acidenteMod === 'sem') matchAcidente = (!item.acaoAcidenteVinculado && !item.numAcidente);
+
+                return matchBusca && matchStatus && matchAcidente;
+            });
+
+            if (listaModificar.length === 0) {
+                cModificar.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding: 15px; font-size:0.85rem;">Nenhuma ação encontrada.</p>';
+                return;
+            }
+
+            listaModificar.forEach(item => {
+                let historicoArrMod = item.historicoAlteracoes || [];
+                let historicoLista = historicoArrMod.length > 0 
+                    ? `<div style="background:#fef3c7; border:1px solid var(--pending); padding:6px; border-radius:6px; margin-top:6px; font-size:0.7rem; color:#92400e;"><strong>Prorrogações (${historicoArrMod.length}x):</strong><br>${historicoArrMod.join('<br>')}</div>` 
+                    : `<div style="font-size:0.7rem; color:var(--text-muted); margin-top:6px;">Sem prorrogações.</div>`;
+
+                let isPrioridade = (item.status !== 'concluido' && (item.acaoAcidenteVinculado || item.numAcidente));
+                let classeCard = isPrioridade ? 'occurrence-card priority-accident' : 'occurrence-card';
+
+                let botoesModificacao = item.status === 'concluido' ? `
+                    <button class="btn-primary" onclick="reverterConclusao(${item.id})" style="width: auto; padding: 6px 12px; font-size: 0.75rem; background: var(--pending);">↩️ Reverter Conclusão</button>
+                    <button class="btn-tool delete" onclick="excluir(${item.id})" style="padding: 6px 10px; font-size: 0.75rem;">🗑️ Excluir</button>
+                ` : `
+                    <button class="btn-primary" onclick="gestorModificarCompleto(${item.id})" style="width: auto; padding: 6px 10px; font-size: 0.75rem; background: var(--primary);">✏️ Editar</button>
+                    <button class="btn-primary" onclick="gestorModificarData(${item.id})" style="width: auto; padding: 6px 10px; font-size: 0.75rem; background: var(--accent);">📅 Prazo</button>
+                    <button class="btn-primary" onclick="concluirMobile(${item.id}); mudarSubAba('execucao');" style="width: auto; padding: 6px 12px; font-size: 0.75rem; background: var(--success);">✅ Concluir</button>
+                    <button class="btn-tool delete" onclick="excluir(${item.id})" style="padding: 6px 10px; font-size: 0.75rem;">🗑️ Excluir</button>
+                `;
+
+                let avisoRevertidoMod = item.revertido ? `<div style="background:#fee2e2; border:1px solid var(--danger); color:#991b1b; padding:6px 10px; border-radius:6px; font-size:0.7rem; font-weight:bold; margin-bottom:6px;">⚠️ Ação revogada e pendente de revisão.</div>` : '';
+                let avisoConcluidoMod = item.status === 'concluido' ? `<div style="background:#d1fae5; border:1px solid var(--success); color:#065f46; padding:6px 10px; border-radius:6px; font-size:0.7rem; font-weight:bold; margin-bottom:6px;">🔒 Ação concluída (bloqueada para edições).</div>` : '';
+
+                const cardM = document.createElement('div');
+                cardM.className = classeCard;
+                cardM.innerHTML = `
+                    ${avisoRevertidoMod}
+                    ${avisoConcluidoMod}
+                    <div class="user-info-tag"><span class="badge-ticket">${item.ticket}</span> Resp: <strong>${item.responsavel || 'Não definido'}</strong> | Status: <strong>${item.status}</strong></div>
+                    <p style="font-weight:600; font-size:0.85rem;">Descrição: ${item.desc}</p>
+                    <p style="font-size:0.8rem; margin:4px 0;"><strong>Fábrica:</strong> ${item.local} | <strong>Setor:</strong> ${item.setor}</p>
+                    <p style="font-size:0.8rem; margin:4px 0;"><strong>Prazo:</strong> ${formatarDataBR(item.dataConclusaoPrazo) || 'Não definido'}</p>
+                    ${historicoLista}
+                    <div style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
+                        ${botoesModificacao}
+                    </div>
+                `;
+                cModificar.appendChild(cardM);
+            });
+        }
+
+        function renderizarGraficosReais() {
+            let concluidas = ocorrencias.filter(x => x.status === 'concluido' && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura')).length;
+            let pendentes = ocorrencias.filter(x => (x.status === 'pendente' || x.status === 'aprovado') && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura')).length;
+            let vencidas = ocorrencias.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo) && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura')).length;
+
+            if (chartStatusInstance) chartStatusInstance.destroy();
+            if (chartRespInstance) chartRespInstance.destroy();
+
+            let tipoStatus = document.getElementById('tipoGraficoStatus') ? document.getElementById('tipoGraficoStatus').value : 'doughnut';
+            const ctxStatus = document.getElementById('graficoStatus').getContext('2d');
+            chartStatusInstance = new Chart(ctxStatus, {
+                type: tipoStatus,
+                data: {
+                    labels: ['Concluídas', 'Pendentes', 'Vencidas'],
+                    datasets: [{
+                        data: [concluidas, pendentes, vencidas],
+                        backgroundColor: ['#006837', '#d4af37', '#c51b24'],
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11, family: 'Inter' } } },
+                        datalabels: {
+                            display: true,
+                            color: tipoStatus === 'bar' ? '#1f2937' : '#ffffff',
+                            font: { weight: 'bold', size: 11 },
+                            formatter: (val) => val > 0 ? val : ''
+                        }
+                    },
+                    scales: tipoStatus === 'bar' ? {
+                        y: { beginAtZero: true, ticks: { stepSize: 1 } },
+                        x: { grid: { display: false } }
+                    } : {}
+                }
+            });
+
+            let nomesGestores = listaGestores.map(g => g.nome);
+            let dadosResponsaveis = nomesGestores.map(resp => {
+                return ocorrencias.filter(x => x.responsavel === resp && x.status !== 'pendente' && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura')).length;
+            });
+
+            let tipoResp = document.getElementById('tipoGraficoResp') ? document.getElementById('tipoGraficoResp').value : 'horizontalBar';
+            let isHorizontal = tipoResp === 'horizontalBar';
+            let chartTypeFinal = isHorizontal ? 'bar' : tipoResp;
+
+            const ctxResp = document.getElementById('graficoResponsaveis').getContext('2d');
+            chartRespInstance = new Chart(ctxResp, {
+                type: chartTypeFinal,
+                data: {
+                    labels: nomesGestores,
+                    datasets: [{
+                        label: 'Ações Atribuídas',
+                        data: dadosResponsaveis,
+                        backgroundColor: '#006837',
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: isHorizontal ? 'y' : 'x',
+                    layout: { 
+                        padding: { top: 15, right: 25, left: 10, bottom: 5 } 
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        datalabels: {
+                            display: true,
+                            color: '#1f2937',
+                            font: { weight: 'bold', size: 11 },
+                            anchor: 'end',
+                            align: isHorizontal ? 'right' : 'top',
+                            formatter: (val) => val > 0 ? val : ''
+                        }
+                    },
+                    scales: { 
+                        x: { 
+                            beginAtZero: true, 
+                            ticks: { stepSize: 1 },
+                            grid: { display: false }
+                        },
+                        y: { 
+                            beginAtZero: true, 
+                            ticks: { 
+                                font: { size: 10, family: 'Inter', weight: 'bold' },
+                                autoSkip: false,
+                                maxTicksLimit: 20
+                            },
+                            afterFit: function(scaleInstance) {
+                                if (isHorizontal) {
+                                    scaleInstance.width = 190; 
+                                }
+                            },
+                            grid: { color: '#f3f4f6' }
+                        } 
+                    }
+                }
+            });
+        }
+
+        function baixarGrafico(canvasId, nomeArquivo) {
+            const canvas = document.getElementById(canvasId);
+            const url = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = nomeArquivo;
+            link.click();
+        }
+
+        function gestorModificarData(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (item.status === 'concluido') {
+                alert("⚠️ Ação concluída! Reverta a conclusão para alterar o prazo.");
+                return;
+            }
+            
+            setTimeout(() => {
+                let autor = prompt("Informe o nome do gestor/responsável que está alterando a data:");
+                if (!autor || autor.trim() === "") {
+                    alert("Operação cancelada: é obrigatório informar o nome.");
+                    return;
+                }
+                autor = autor.trim().toUpperCase();
+
+                let wrapperModal = document.createElement('div');
+                wrapperModal.style.position = 'fixed';
+                wrapperModal.style.top = '0';
+                wrapperModal.style.left = '0';
+                wrapperModal.style.width = '100%';
+                wrapperModal.style.height = '100%';
+                wrapperModal.style.background = 'rgba(0,0,0,0.6)';
+                wrapperModal.style.zIndex = '99999';
+                wrapperModal.style.display = 'flex';
+                wrapperModal.style.alignItems = 'center';
+                wrapperModal.style.justifyContent = 'center';
+
+                let cardModal = document.createElement('div');
+                cardModal.style.background = 'white';
+                cardModal.style.padding = '20px';
+                cardModal.style.borderRadius = '12px';
+                cardModal.style.width = '90%';
+                cardModal.style.maxWidth = '350px';
+                cardModal.style.textAlign = 'center';
+                cardModal.innerHTML = `
+                    <h3 style="margin-top:0; color:var(--primary); font-size:1.1rem; margin-bottom:12px;">📅 Modificar Prazo Limite</h3>
+                    <div style="margin-bottom:14px; text-align:left;">
+                        <label style="font-size:0.8rem; font-weight:600; display:block; margin-bottom:4px;">Selecione a Nova Data:</label>
+                        <input type="date" id="inputDataPrazoGestor" value="${item.dataConclusaoPrazo || ''}" style="width:100%; padding:10px; border:1px solid #d1d5db; border-radius:8px; font-size:1rem; box-sizing:border-box;">
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button id="btnSalvarPrazoGestor" class="btn-primary" style="flex:1;">Salvar</button>
+                        <button id="btnCancelarPrazoGestor" class="btn-tool" style="flex:1; background:#e5e7eb; color:#1f2937;">Cancelar</button>
+                    </div>
+                `;
+
+                wrapperModal.appendChild(cardModal);
+                document.body.appendChild(wrapperModal);
+
+                document.getElementById('btnCancelarPrazoGestor').onclick = () => {
+                    document.body.removeChild(wrapperModal);
+                };
+
+                document.getElementById('btnSalvarPrazoGestor').onclick = () => {
+                    let novaData = document.getElementById('inputDataPrazoGestor').value;
+                    if (!novaData) {
+                        alert("Selecione uma data válida.");
+                        return;
+                    }
+
+                    if (!item.historicoAlteracoes) item.historicoAlteracoes = [];
+                    if (!item.dataConclusaoPrazo) {
+                        item.dataConclusaoPrazo = novaData;
+                    } else if (item.dataConclusaoPrazo !== novaData) {
+                        let dataAntigaFormatada = formatarDataBR(item.dataConclusaoPrazo);
+                        let dataNovaFormatada = formatarDataBR(novaData);
+                        let dataModificacao = new Date().toLocaleDateString('pt-BR');
+                        item.historicoAlteracoes.push(`EM ${dataModificacao} POR <strong>${autor}</strong>: DE ${dataAntigaFormatada} PARA ${dataNovaFormatada}`);
+                        item.dataConclusaoPrazo = novaData;
+                        totalAlteradas++;
+                    }
+
+                    window.fbSalvarOcorrencia(item);
+                    document.body.removeChild(wrapperModal);
+                    alert("Data programada modificada com sucesso!");
+                };
+            }, 10);
+        }
+
+        function gestorModificarCompleto(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            if (item.status === 'concluido') {
+                alert("⚠️ Ação concluída! Reverta a conclusão para poder editá-la.");
+                return;
+            }
+            setTimeout(() => {
+                const novoLocal = prompt("Modificar Fábrica:", item.local);
+                const novoSetor = prompt("Modificar Setor:", item.setor);
+                const novaDesc = prompt("Modificar Descrição:", item.desc);
+                const novaAcaoAcid = prompt("Modificar Ação de Acidente Vinculado:", item.acaoAcidenteVinculado || "");
+                const novoNumAcid = prompt("Modificar Número de Acidente:", item.numAcidente || "");
+                
+                if (novoLocal !== null && novoLocal.trim() !== "") item.local = novoLocal.trim().toUpperCase();
+                if (novoSetor !== null && novoSetor.trim() !== "") item.setor = novoSetor.trim().toUpperCase();
+                if (novaDesc !== null && novaDesc.trim() !== "") item.desc = novaDesc.trim().toUpperCase();
+                if (novaAcaoAcid !== null) item.acaoAcidenteVinculado = novaAcaoAcid.trim().toUpperCase();
+                if (novoNumAcid !== null) item.numAcidente = novoNumAcid.trim().toUpperCase();
+
+                window.fbSalvarOcorrencia(item);
+                alert("Ação modificada com sucesso!");
+            }, 10);
+        }
+
+        function excluir(id) {
+            if (confirm("Tem certeza que deseja excluir permanentemente este registro?")) {
+                window.fbExcluirOcorrencia(id);
+            }
+        }
+
+        function aprovar(id) {
+            const item = ocorrencias.find(x => x.id === id);
+            
+            if (window.tempFotoSubst) {
+                item.foto = window.tempFotoSubst;
+                item.timestampFotoAntes = gerarTimestampCarimbo();
+                window.tempFotoSubst = null;
+            }
+
+            item.validor = document.getElementById(`validor-${id}`).value.trim().toUpperCase();
+            item.responsavel = document.getElementById(`resp-${id}`).value;
+            let prazoInputVal = document.getElementById(`prazo-${id}`).value;
+            
+            item.dataConclusaoPrazo = prazoInputVal || '';
+
+            item.gravidade = document.getElementById(`grav-${id}`).value;
+            item.acaoAcidenteVinculado = document.getElementById(`acaoAcidente-${id}`).value.trim().toUpperCase();
+            item.numAcidente = document.getElementById(`numAcidente-${id}`).value.trim().toUpperCase();
+
+            if (!item.validor || !item.responsavel) {
+                alert('Preencha quem validou e selecione o responsável.');
+                return;
+            }
+
+            if (item.dataConclusaoPrazo) {
+                let p = item.dataConclusaoPrazo.split('-');
+                if (p.length === 3) {
+                    item.ano = p[0];
+                    item.mes = p[1];
+                }
+            }
+
+            item.status = 'aprovado';
+            item.revertido = false;
+            window.fbSalvarOcorrencia(item);
+            alert('Ação validada e atribuída com sucesso!');
+        }
+
+        function resolverDireto(id) {
+            const item = ocorrencias.find(x => x.id === id);
+
+            if (item.status === 'concluido') {
+                alert("⚠️ Ação já concluída!");
+                return;
+            }
+
+            if (!item.foto) {
+                alert('⚠️ Validação de Segurança: É obrigatório possuir a foto registrada!');
+                return;
+            }
+
+            if (!window.tempFotoConc) {
+                alert('⚠️ Validação de Segurança: É obrigatório anexar a "Foto de Conclusão" para concluir esta ocorrência!');
+                return;
+            }
+
+            item.fotoConclusao = window.tempFotoConc;
+            item.timestampFotoDepois = gerarTimestampCarimbo();
+            item.dataConclusaoReal = new Date().toISOString().split('T')[0];
+            item.status = 'concluido';
+            window.tempFotoConc = null;
+            window.fbSalvarOcorrencia(item);
+            alert('Ocorrência concluída com sucesso! Agora ela está bloqueada para modificações.');
+        }
+    </script>
+</body>
+</html>

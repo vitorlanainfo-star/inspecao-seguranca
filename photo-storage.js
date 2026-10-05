@@ -1,5 +1,5 @@
-// Leave empty until the private Worker has been deployed and tested.
-export const PHOTO_API_URL = '';
+// Private gateway validated against Firebase and the R2 bucket.
+export const PHOTO_API_URL = 'https://inspecao-fotos.vitor-lana-info.workers.dev';
 
 export function isR2Photo(value) {
     return value?.storage === 'r2' && typeof value.key === 'string';

@@ -38,7 +38,7 @@ function fixture({ profile = { status: 'approved', role: 'user' }, reference = d
     return { send, objects, calls };
 }
 test('disabled configuration preserves legacy photos without any network request', async () => {
-    const store = createPhotoStorage({ getUser: () => null, fetchImpl: () => assert.fail('network') });
+    const store = createPhotoStorage({ apiUrl: '', getUser: () => null, fetchImpl: () => assert.fail('network') });
     assert.equal(store.enabled, false);
     assert.equal(await store.upload(123, 'foto', dataUrl), dataUrl);
     assert.equal(await store.read(123, 'foto', dataUrl), dataUrl);
@@ -60,7 +60,7 @@ test('client upload errors reject instead of silently falling back to expensive 
     await assert.rejects(store.upload(123, 'foto', dataUrl), /Quota exceeded/);
 });
 test('unconfigured gateway refuses R2 reads instead of misrepresenting descriptor as image', async () => {
-    const store = createPhotoStorage({ getUser: () => null });
+    const store = createPhotoStorage({ apiUrl: '', getUser: () => null });
     await assert.rejects(store.read(123, 'foto', descriptor), /configurado/);
 });
 test('private photo read checks current approved profile and exact published reference', async () => {

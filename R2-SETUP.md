@@ -6,7 +6,7 @@ O Worker verifica o token no Firebase e o perfil aprovado atual. A leitura exige
 
 ## Validação
 
-Em 05/10/2026, 23 testes locais passaram, incluindo fluxo real de fbSalvarOcorrencia, falhas e autorização simulada. A regra do criador foi corrigida para verificar o estado resultante da gravação atômica; as demais regras permanecem iguais. O console Firebase aceitou as regras e a simulação confirmou o bloqueio sem login. Um teste real administrativo enviou JPEG ao R2, publicou referência Firebase e leu os mesmos bytes. Ocorrência e foto descartáveis foram removidas. Isso não equivale a teste de carga ou validação de todos os fluxos possíveis.
+Em 05/10/2026, 26 testes locais passaram, incluindo fluxo real de fbSalvarOcorrencia, falhas e autorização simulada. A regra do criador foi corrigida para verificar o estado resultante da gravação atômica; as demais regras permanecem iguais. O console Firebase aceitou as regras e a simulação confirmou o bloqueio sem login. Um teste real administrativo enviou JPEG ao R2, publicou referência Firebase e leu os mesmos bytes. Ocorrência e foto descartáveis foram removidas. Isso não equivale a teste de carga ou validação de todos os fluxos possíveis.
 
 ## Migração
 

@@ -6,7 +6,7 @@ O Worker verifica o token no Firebase e o perfil aprovado atual. A leitura exige
 
 ## Validação
 
-Em 05/10/2026, 26 testes locais passaram, incluindo fluxo real de fbSalvarOcorrencia, falhas e autorização simulada. A regra do criador foi corrigida para verificar o estado resultante da gravação atômica; as demais regras permanecem iguais. O console Firebase aceitou as regras e a simulação confirmou o bloqueio sem login. Um teste real administrativo enviou JPEG ao R2, publicou referência Firebase e leu os mesmos bytes. Ocorrência e foto descartáveis foram removidas. Isso não equivale a teste de carga ou validação de todos os fluxos possíveis.
+Em 05/10/2026, 27 testes locais passaram, incluindo fluxo real de fbSalvarOcorrencia, falhas e autorização simulada. A regra do criador foi corrigida para verificar o estado resultante da gravação atômica; as demais regras permanecem iguais. O console Firebase aceitou as regras e a simulação confirmou o bloqueio sem login. Um teste real administrativo enviou JPEG ao R2, publicou referência Firebase e leu os mesmos bytes. Ocorrência e foto descartáveis foram removidas. Isso não equivale a teste de carga ou validação de todos os fluxos possíveis.
 
 ## Migração
 
@@ -21,3 +21,7 @@ Antes de migrar, publique a versão que entende referências R2. Depois da migra
 O cache é preservado porque o conteúdo das fotos não muda. O Worker usa Workers Free; o R2 tem franquia e cobrança por excedentes. Alertas de orçamento não bloqueiam gastos.
 
 Documentação: https://developers.cloudflare.com/r2/pricing/ e https://developers.cloudflare.com/workers/platform/limits/
+
+## Resultado da migração inicial
+
+As 15 fotos existentes foram copiadas e verificadas sem recompressão. A comparação dos backups confirmou 15 ocorrências idênticas, 15 referências R2 e 32.353.358 bytes de imagens preservados. A conferência também corrigiu a exposição do manipulador de zoom para os cliques do HTML. Leituras reais sem login retornaram HTTP 401; sem origem autorizada, HTTP 403.

@@ -70,3 +70,11 @@ test('inline scripts remain syntactically valid after integration', () => {
         new vm.Script(source);
     }
 });
+test('photo click can call the module zoom handler from HTML', () => {
+    const zooms=[];
+    const source=originalModule.slice(originalModule.indexOf('function abrirZoomImgDoElemento'),originalModule.indexOf('const observadorFotos'));
+    const context={window:{location:{href:'https://app.example/'}},abrirZoomImg:url=>zooms.push(url)};
+    vm.runInNewContext(source,context);
+    context.window.abrirZoomImgDoElemento({src:'data:image/jpeg;base64,photo'});
+    assert.deepEqual(zooms,['data:image/jpeg;base64,photo']);
+});

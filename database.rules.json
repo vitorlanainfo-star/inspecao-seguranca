@@ -1,0 +1,84 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "users": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved')",
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved' || auth.token.email == 'admin@users.example.com' && auth.uid == $uid || auth.uid == $uid && !data.exists() && newData.child('role').val() == 'user' && newData.child('status').val() == 'pending')",
+        ".validate": "newData.hasChildren(['username', 'fullName', 'role', 'status', 'createdAt'])",
+        "username": {
+          ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 40"
+        },
+        "fullName": {
+          ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 100"
+        },
+        "role": {
+          ".validate": "newData.val() == 'admin' || newData.val() == 'user'"
+        },
+        "status": {
+          ".validate": "newData.val() == 'pending' || newData.val() == 'approved' || newData.val() == 'rejected'"
+        }
+      }
+    },
+    "audit": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+      "$uid": {
+        ".read": "auth != null && (auth.uid == $uid || root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved')",
+        "$event": {
+          ".write": "(auth != null && auth.uid == $uid && !data.exists() && newData.child('uid').val() == auth.uid) || (auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved' && !newData.exists())",
+          ".validate": "newData.hasChildren(['uid', 'tipo', 'horarioServidor'])"
+        }
+      }
+    },
+    "ocorrencias": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+      "$id": {
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved' || root.child('users').child(auth.uid).child('status').val() == 'approved' && (!data.exists() && newData.child('createdByUid').val() == auth.uid && newData.child('status').val() == 'pendente' || data.exists() && (data.child('responsavelUid').val() == auth.uid) && newData.child('responsavelUid').val() == data.child('responsavelUid').val() && newData.child('createdByUid').val() == data.child('createdByUid').val() && newData.child('ticket').val() == data.child('ticket').val() && newData.child('tipoOcorrencia').val() == data.child('tipoOcorrencia').val() && newData.child('dataCriacao').val() == data.child('dataCriacao').val() && newData.child('criador').val() == data.child('criador').val() && newData.child('nome').val() == data.child('nome').val() && newData.child('local').val() == data.child('local').val() && newData.child('setor').val() == data.child('setor').val() && newData.child('desc').val() == data.child('desc').val() && newData.child('responsavel').val() == data.child('responsavel').val() && newData.child('dataConclusaoPrazo').val() == data.child('dataConclusaoPrazo').val() && newData.child('gravidade').val() == data.child('gravidade').val() && newData.child('validor').val() == data.child('validor').val() && newData.child('acaoAcidenteVinculado').val() == data.child('acaoAcidenteVinculado').val() && newData.child('numAcidente').val() == data.child('numAcidente').val() && newData.child('historicoAlteracoes').val() == data.child('historicoAlteracoes').val() && newData.child('revertido').val() == data.child('revertido').val() && (newData.child('status').val() == data.child('status').val() || data.child('status').val() == 'aprovado' && newData.child('status').val() == 'concluido')))",
+        ".validate": "newData.hasChildren(['id', 'ticket', 'status', 'local', 'setor', 'desc'])",
+        "dataConclusaoPrazo": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && data.parent().exists() && data.parent().child('status').val() != 'concluido' && newData.parent().child('status').val() == data.parent().child('status').val() && newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+        },
+        "historicoAlteracoes": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && data.parent().exists() && data.parent().child('status').val() != 'concluido' && newData.parent().child('status').val() == data.parent().child('status').val() && newData.parent().child('dataConclusaoPrazo').isString() && newData.parent().child('dataConclusaoPrazo').val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.parent().child('dataConclusaoPrazo').val() != data.parent().child('dataConclusaoPrazo').val()"
+        }
+      }
+    },
+    "fotos": {
+      "$id": {
+        ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        "foto": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && newData.exists() && !data.exists() && newData.parent().parent().parent().child('ocorrencias').child($id).child('createdByUid').val() == auth.uid"
+        },
+        "fotoConclusao": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && newData.exists() && (root.child('ocorrencias').child($id).child('responsavelUid').val() == auth.uid)"
+        }
+      }
+    },
+    "config": {
+      "gestores": {
+        ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'"
+      },
+      "setores": {
+        ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'"
+      },
+      "contadorProtocolo": {
+        ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".validate": "newData.isNumber() && (data.exists() ? newData.val() == data.val() + 1 : newData.val() == 1)"
+      },
+      "senhaGestor": {
+        ".read": false,
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'"
+      },
+      "$other": {
+        ".read": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved'",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'"
+      }
+    }
+  }
+}

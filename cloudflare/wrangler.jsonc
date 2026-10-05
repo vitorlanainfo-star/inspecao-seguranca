@@ -1,0 +1,11 @@
+{
+  "name": "inspecao-fotos",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-05",
+  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "inspecao-fotos" }],
+  "vars": {
+    "ALLOWED_ORIGIN": "https://vitorlanainfo-star.github.io",
+    "FIREBASE_DATABASE_URL": "https://inspecaoseguranca-fe2c4-default-rtdb.firebaseio.com",
+    "FIREBASE_API_KEY": "AIzaSyDDli2nrlO8g8dCxawIV5LVEZbEt-RTR-Q"
+  }
+}

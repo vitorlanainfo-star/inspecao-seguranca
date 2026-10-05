@@ -13,6 +13,8 @@
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getDatabase, ref, set, onValue, remove, runTransaction, get, update, push, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
+        import { createPhotoStorage } from './photo-storage.js';
+
         const firebaseConfig = {
             apiKey: "AIzaSyDDli2nrlO8g8dCxawIV5LVEZbEt-RTR-Q",
             authDomain: "inspecaoseguranca-fe2c4.firebaseapp.com",
@@ -30,6 +32,7 @@
         localStorage.removeItem("senhaGestor");
         let currentUser = null;
         let currentProfile = null;
+        const photoStorage = createPhotoStorage({ getUser: () => currentUser });
         let userProfiles = {};
         let stopOwnProfileListener = null;
         let stopAdminUsersListener = null;
@@ -462,7 +465,8 @@
                         if (!aindaAtual()) return null;
                         const legado = fotosPendentesMigracao.get(chaveFoto);
                         const snapshot = legado ? null : await get(ref(db, `fotos/${id}/${campo}`));
-                        const dataUrl = legado || (snapshot.exists() ? snapshot.val() : null);
+                        const valorArmazenado = legado || (snapshot.exists() ? snapshot.val() : null);
+                        const dataUrl = await photoStorage.read(id, campo, valorArmazenado);
                         if (!aindaAtual()) return null;
                         if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
                             cacheFotos.set(chave, dataUrl);
@@ -550,7 +554,11 @@
                 }
                 // A referência da versão e seus bytes mudam na mesma gravação.
                 const alteracoes = { [`ocorrencias/${registro.id}`]: registro };
-                for (const [campo, foto] of Object.entries(fotosParaSalvar)) alteracoes[`fotos/${registro.id}/${campo}`] = foto;
+                // Upload first. A failed upload cannot publish a record with a missing photo.
+                // References and version metadata are committed atomically in Firebase.
+                for (const [campo, foto] of Object.entries(fotosParaSalvar)) {
+                    alteracoes[`fotos/${registro.id}/${campo}`] = await photoStorage.upload(registro.id, campo, foto);
+                }
                 await update(ref(db), alteracoes);
                 for (const [campo, foto] of Object.entries(fotosParaSalvar)) {
                     const chaveFoto = `${registro.id}/${campo}`;
@@ -570,7 +578,13 @@
 
         window.fbExcluirOcorrencia = async function(id) {
             if (!window.firebasePodeGerenciar) return alert("Apenas o administrador pode excluir registros.");
-            await Promise.all([remove(ref(db, `ocorrencias/${id}`)), remove(ref(db, `fotos/${id}`))]);
+            const fotosSnapshot = await get(ref(db, `fotos/${id}`));
+            const fotosAntigas = fotosSnapshot.val() || {};
+            await update(ref(db), { [`ocorrencias/${id}`]: null, [`fotos/${id}`]: null });
+            for (const campo of camposFoto) {
+                try { await photoStorage.remove(id, campo, fotosAntigas[campo]); }
+                catch (error) { console.warn('Registro excluído; limpeza da foto no R2 precisa ser repetida:', error); }
+            }
             await registrarAuditoria("exclusao", `Ocorrência ${id}`);
         };
 

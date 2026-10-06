@@ -624,6 +624,7 @@
                 const snapshot = await get(ref(db, caminho));
                 const atual = snapshot.val();
                 if (!atual || atual.tipoOcorrencia === 'Incidente') throw new Error('A ação não está disponível.');
+                if (decisao !== 'pendente' && atual.responsavelUid !== currentUser.uid) throw new Error('Somente a conta vinculada ao responsável pode aceitar ou recusar esta ação.');
                 if (decisao === 'pendente' ? atual.status !== 'recusado' : atual.status !== 'aprovado') {
                     throw new Error('A situação desta ação mudou. Atualize o painel antes de continuar.');
                 }
@@ -766,12 +767,24 @@
             agendarRenderFirebase();
         }
 
+        function encontrarContaResponsavelPorNome(nomeResponsavel, perfis) {
+            const normalizar = valor => String(valor || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
+            const nome = normalizar(nomeResponsavel);
+            if (!nome) return null;
+            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && normalizar(perfil.fullName));
+            const exatos = aprovados.filter(([, perfil]) => normalizar(perfil.fullName) === nome);
+            if (exatos.length) return exatos.length === 1 ? exatos[0][0] : null;
+            const primeiroNome = nome.split(' ')[0];
+            const candidatos = aprovados.filter(([, perfil]) => normalizar(perfil.fullName).split(' ')[0] === primeiroNome);
+            return candidatos.length === 1 ? candidatos[0][0] : null;
+        }
+        window.encontrarContaResponsavelPorNome = encontrarContaResponsavelPorNome;
+
         function vincularResponsavelLegado(item) {
-            const nome = String(item.responsavel || "").trim().toLocaleLowerCase("pt-BR");
-            if (!nome) return;
-            const correspondencias = Object.entries(userProfiles).filter(([, perfil]) => perfil?.status === "approved" && perfil.role === "user" && String(perfil.fullName || "").trim().toLocaleLowerCase("pt-BR") === nome);
-            if (correspondencias.length !== 1) return;
-            const [uid] = correspondencias[0];
+            // Completa somente a ligação da conta de login; fábrica, setor e responsável permanecem intactos.
+            if (item.responsavelUid) return;
+            const uid = encontrarContaResponsavelPorNome(item.responsavel, userProfiles);
+            if (!uid) return;
             set(ref(db, `ocorrencias/${item.id}/responsavelUid`), uid)
                 .then(() => registrarAuditoria("migração", `Ação ${item.ticket || item.id} vinculada à conta aprovada`))
                 .catch(error => console.warn("Não foi possível vincular automaticamente uma ação antiga:", error));
@@ -2899,13 +2912,17 @@
             return !!item && item.status !== 'concluido' && item.status !== 'recusado' &&
                 window.firebasePerfilAtual?.status === 'approved' && !!window.firebaseUsuarioAtual?.uid;
         }
+        function podeDecidirManutencao(item) {
+            return !!item && item.status === 'aprovado' && podeProgramarPrazo(item) &&
+                item.responsavelUid === window.firebaseUsuarioAtual?.uid;
+        }
 
         const decisoesManutencaoEmAndamento = new Set();
         async function decidirManutencao(id, decisao) {
             if (decisoesManutencaoEmAndamento.has(String(id))) return;
             const item = ocorrencias.find(x => String(x.id) === String(id));
             if (!item) return;
-            if (decisao === 'pendente' ? !window.firebasePodeGerenciar : !podeProgramarPrazo(item)) return;
+            if (decisao === 'pendente' ? !window.firebasePodeGerenciar : !podeDecidirManutencao(item)) return;
             const pergunta = decisao === 'recusada' ? 'Recusar esta ação e enviá-la para Recusados?' :
                 decisao === 'pendente' ? 'Desfazer a recusa e devolver esta ação à aba Usuário?' : 'Aceitar esta ação?';
             if (!confirm(pergunta)) return;
@@ -3513,7 +3530,7 @@
                                             let botaoAlterarPrazoUser = item.status === 'concluido' || !podeProgramarPrazo(item) ? '' : `
                                                 <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;" onclick="event.stopPropagation()">
                                                     <button class="btn-tool" onclick="alterarPrazoUsuario(${item.id})" style="background: #e5e7eb; color: var(--text-main); font-size: 0.7rem;">📅 Programar data</button>
-                                                    ${item.status === 'aprovado' ? `<button class="btn-approve" onclick="decidirManutencao(${item.id}, 'aceita')" ${item.manutencao?.decisao === 'aceita' ? 'disabled' : ''}>✅ ${item.manutencao?.decisao === 'aceita' ? 'Aceita' : 'Aceitar'}</button>
+                                                    ${podeDecidirManutencao(item) ? `<button class="btn-approve" onclick="decidirManutencao(${item.id}, 'aceita')" ${item.manutencao?.decisao === 'aceita' ? 'disabled' : ''}>✅ ${item.manutencao?.decisao === 'aceita' ? 'Aceita' : 'Aceitar'}</button>
                                                     <button class="btn-tool delete" onclick="decidirManutencao(${item.id}, 'recusada')">❌ Recusar</button>` : ''}
                                                     <span style="font-size: 0.7rem; color: var(--text-muted);"><strong>${formatarDataBR(item.dataConclusaoPrazo) || 'A DEFINIR'}</strong></span>
                                                     ${item.manutencao?.decisao === 'aceita' ? `<span style="font-size:0.75rem;color:var(--success);">Aceita por ${escaparHtml(item.manutencao.usuario)}</span>` : ''}
@@ -4265,9 +4282,7 @@
                 item.responsavel = novoResponsavel;
                 // A atribuição é baseada no Cadastro de Fábricas. UID é apenas um vínculo opcional de acesso/login.
                 const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : (window.firebaseUserProfiles || {});
-                const normalizar = v => String(v || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
-                const perfilNovo = Object.entries(perfis).find(([, perfil]) => perfil && perfil.status === 'approved' && normalizar(perfil.fullName) === normalizar(novoResponsavel));
-                item.responsavelUid = perfilNovo ? perfilNovo[0] : '';
+                item.responsavelUid = window.encontrarContaResponsavelPorNome(novoResponsavel, perfis) || '';
 
                 Promise.resolve(window.fbSalvarOcorrencia(item)).then(salvou => {
                     if (salvou === false) return;
@@ -4322,9 +4337,7 @@
             item.validor = document.getElementById(`validor-${id}`).value.trim().toUpperCase();
             item.responsavel = document.getElementById(`resp-${id}`).value.trim();
             const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : {};
-            const normalizarNomeResponsavel = v => String(v || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
-            const responsavelPerfil = Object.entries(perfis).find(([, perfil]) => perfil && perfil.status === 'approved' && normalizarNomeResponsavel(perfil.fullName) === normalizarNomeResponsavel(item.responsavel));
-            item.responsavelUid = responsavelPerfil ? responsavelPerfil[0] : '';
+            item.responsavelUid = window.encontrarContaResponsavelPorNome(item.responsavel, perfis) || '';
             let prazoInputVal = document.getElementById(`prazo-${id}`).value;
             
             item.dataConclusaoPrazo = prazoInputVal || '';

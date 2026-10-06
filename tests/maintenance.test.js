@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const moduleSource = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 const source = moduleSource.slice(moduleSource.indexOf('window.fbDecidirManutencao ='), moduleSource.indexOf('window.fbSalvarPrazo ='));
-const original = { id: 123, ticket: 'T-123', status: 'aprovado', tipoOcorrencia: 'Condicao Insegura', responsavel: 'JOÃO', responsavelUid: 'responsavel-1', local: 'FÁBRICA', setor: 'SETOR', dataConclusaoPrazo: '2026-10-20', temFoto: true, desc: 'AÇÃO' };
+const original = { id: 123, ticket: 'T-123', status: 'aprovado', tipoOcorrencia: 'Condicao Insegura', responsavel: 'JOÃO', responsavelUid: 'manutencao-1', local: 'FÁBRICA', setor: 'SETOR', dataConclusaoPrazo: '2026-10-20', temFoto: true, desc: 'AÇÃO' };
 function harness({ item = original, admin = false, profileStatus = 'approved', fail = false } = {}) {
     let record = structuredClone(item);
     const writes = [], errors = [], audits = [];
@@ -63,6 +63,30 @@ test('Firebase failure does not change local action or create success audit', as
     assert.equal(f.record().status,'aprovado'); assert.equal(f.context.ocorrenciasPorId.size,0); assert.equal(f.audits.length,0);
 });
 
+test('another approved account cannot decide for the assigned responsible', async () => {
+    const f=harness({item:{...original,responsavelUid:'other'}});
+    assert.equal(await f.decide(123,'aceita'),false); assert.equal(f.writes.length,0);
+});
+
+const resolverSource=moduleSource.slice(moduleSource.indexOf('function encontrarContaResponsavelPorNome'),moduleSource.indexOf('function vincularResponsavelLegado'));
+const resolverContext={window:{}};vm.runInNewContext(resolverSource,resolverContext);
+const resolveAccount=resolverContext.window.encontrarContaResponsavelPorNome;
+const profiles={a:{status:'approved',fullName:'Carlos Silva'},b:{status:'approved',fullName:'Ana Oliveira'}};
+test('first-name fallback resolves one approved account despite surname and case differences',()=>{
+    assert.equal(resolveAccount('  CARLOS  ',profiles),'a');
+    assert.equal(resolveAccount('Carlos Santos',profiles),'a');
+});
+test('repeated first names do not silently choose a person; exact match still takes precedence',()=>{
+    const duplicates={...profiles,c:{status:'approved',fullName:'Carlos Souza'}};
+    assert.equal(resolveAccount('Carlos',duplicates),null);
+    assert.equal(resolveAccount('Carlos Silva',duplicates),'a');
+    assert.equal(resolveAccount('Carlos Silva',{...duplicates,d:{status:'approved',fullName:'Carlos Silva'}}),null);
+});
+test('first-name matching excludes pending accounts and missing names',()=>{
+    assert.equal(resolveAccount('Carlos',{a:{status:'pending',fullName:'Carlos Silva'}}),null);
+    assert.equal(resolveAccount('',profiles),null);
+});
+
 const rules = JSON.parse(readFileSync(new URL('../database.rules.json', import.meta.url), 'utf8')).rules.ocorrencias.$id;
 class Snapshot {
     constructor(root, path=[]) { this.root=root; this.path=path; }
@@ -78,21 +102,22 @@ function evaluate(rule, previous, next, {role='user', status='approved', uid='u1
     const updated={...old,ocorrencias:{123:next}};
     return vm.runInNewContext(rule,{auth:uid?{uid}:null,now:1000,root:new Snapshot(old),data:new Snapshot(old,['ocorrencias','123',...(field?[field]:[])]),newData:new Snapshot(updated,['ocorrencias','123',...(field?[field]:[])])});
 }
-const rejected={...original,status:'recusado',manutencao:{decisao:'recusada',uid:'u1',usuario:'login-real',em:1000,ultimaRecusa:{uid:'u1',usuario:'login-real',em:1000}}};
+const rulesOriginal={...original,responsavelUid:'u1'};
+const rejected={...rulesOriginal,status:'recusado',manutencao:{decisao:'recusada',uid:'u1',usuario:'login-real',em:1000,ultimaRecusa:{uid:'u1',usuario:'login-real',em:1000}}};
 test('rules allow scheduler account to refuse with real login in the same atomic write',()=>{
-    assert.equal(evaluate(rules.status['.write'],original,rejected,{field:'status'}),true);
-    assert.equal(evaluate(rules.manutencao['.write'],original,rejected),true);
-    assert.equal(evaluate(rules.manutencao['.validate'],original,rejected),true);
-    assert.equal(evaluate(rules['.validate'],original,rejected,{field:null}),true);
+    assert.equal(evaluate(rules.status['.write'],rulesOriginal,rejected,{field:'status'}),true);
+    assert.equal(evaluate(rules.manutencao['.write'],rulesOriginal,rejected),true);
+    assert.equal(evaluate(rules.manutencao['.validate'],rulesOriginal,rejected),true);
+    assert.equal(evaluate(rules['.validate'],rulesOriginal,rejected,{field:null}),true);
 });
 test('rules reject spoofed username, UID, stale acceptance and decisions on concluded actions',()=>{
     for(const change of [{usuario:'outra-pessoa'},{uid:'other'}]) {
-        assert.equal(evaluate(rules.manutencao['.validate'],original,{...rejected,manutencao:{...rejected.manutencao,...change}}),false);
+        assert.equal(evaluate(rules.manutencao['.validate'],rulesOriginal,{...rejected,manutencao:{...rejected.manutencao,...change}}),false);
     }
     assert.equal(evaluate(rules.manutencao['.write'],{...original,status:'concluido'},rejected),false);
     const accepted={...rejected,manutencao:{decisao:'aceita',uid:'u1',usuario:'login-real',em:1000}};
     assert.equal(evaluate(rules.manutencao['.validate'],rejected,accepted),false);
-    assert.equal(evaluate(rules.manutencao['.write'],original,rejected,{status:'pending'}),false);
+    assert.equal(evaluate(rules.manutencao['.write'],rulesOriginal,rejected,{status:'pending'}),false);
 });
 test('only management can undo refusal and it must preserve the previous refusal identity',()=>{
     const next={...rejected,status:'aprovado',manutencao:{...rejected.manutencao,decisao:'pendente'}};
@@ -103,4 +128,11 @@ test('only management can undo refusal and it must preserve the previous refusal
     const forged={...next,manutencao:{...next.manutencao,ultimaRecusa:{usuario:'forjado',uid:'u1',em:1000}}};
     assert.equal(evaluate(rules.manutencao['.validate'],rejected,forged,{role:'admin'}),false);
     assert.equal(evaluate(rules['.validate'],rejected,{...rejected,status:'concluido'},{role:'admin',field:null}),false);
+});
+
+test('Firebase refuses another account even if it forges a matching decision record',()=>{
+    const otherOwner={...rulesOriginal,responsavelUid:'other'};
+    assert.equal(evaluate(rules.manutencao['.write'],otherOwner,rejected),false);
+    assert.equal(evaluate(rules.manutencao['.validate'],otherOwner,rejected),false);
+    assert.equal(evaluate(rules.status['.write'],otherOwner,rejected,{field:'status'}),false);
 });

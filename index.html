@@ -612,6 +612,48 @@
             return true;
         };
 
+        // Escreve somente a decisão e o status; preserva vínculo, prazo, fotos e descrição.
+        window.fbDecidirManutencao = async function(id, decisao) {
+            try {
+                if (!currentUser || currentProfile?.status !== 'approved') throw new Error('Entre com uma conta aprovada.');
+                const usuario = String(currentProfile.username || '').trim();
+                if (!usuario) throw new Error('A conta precisa ter um nome de usuário cadastrado.');
+                if (!['aceita', 'recusada', 'pendente'].includes(decisao)) throw new Error('Decisão inválida.');
+                if (decisao === 'pendente' && !window.firebasePodeGerenciar) throw new Error('Apenas a gestão pode desfazer a recusa.');
+                const caminho = `ocorrencias/${id}`;
+                const snapshot = await get(ref(db, caminho));
+                const atual = snapshot.val();
+                if (!atual || atual.tipoOcorrencia === 'Incidente') throw new Error('A ação não está disponível.');
+                if (decisao === 'pendente' ? atual.status !== 'recusado' : atual.status !== 'aprovado') {
+                    throw new Error('A situação desta ação mudou. Atualize o painel antes de continuar.');
+                }
+                if (decisao === 'aceita' && atual.manutencao?.decisao === 'aceita') return true;
+                const manutencao = {
+                    decisao, usuario, uid: currentUser.uid, em: serverTimestamp()
+                };
+                if (decisao === 'recusada') {
+                    manutencao.ultimaRecusa = { usuario, uid: currentUser.uid, em: serverTimestamp() };
+                } else if (atual.manutencao?.ultimaRecusa) {
+                    manutencao.ultimaRecusa = atual.manutencao.ultimaRecusa;
+                }
+                const mudancas = { manutencao };
+                if (decisao === 'recusada') mudancas.status = 'recusado';
+                if (decisao === 'pendente') mudancas.status = 'aprovado';
+                await update(ref(db, caminho), mudancas);
+                await registrarAuditoria('manutenção', `${atual.ticket || id}: ${decisao === 'pendente' ? 'recusa desfeita' : decisao}`);
+                // Releitura evita usar timestamps provisórios ou sobrescrever alterações concorrentes.
+                const salvo = await get(ref(db, caminho));
+                if (salvo.exists()) ocorrenciasPorId.set(String(id), salvo.val());
+                ocorrencias = Array.from(ocorrenciasPorId.values());
+                agendarRenderFirebase();
+                return true;
+            } catch (error) {
+                console.error('Não foi possível registrar a decisão:', error);
+                alert(error.message || 'Não foi possível registrar a decisão.');
+                return false;
+            }
+        };
+
         window.fbSalvarPrazo = async function(id, novaData) {
             try {
                 if (!currentUser || currentProfile?.status !== 'approved') throw new Error('Entre com uma conta aprovada.');
@@ -620,6 +662,7 @@
                 const snapshot = await get(ref(db, caminho));
                 const atual = snapshot.val();
                 if (!atual) throw new Error('A ação não está mais disponível.');
+                if (atual.status === 'recusado') throw new Error('A gestão precisa desfazer a recusa antes de programar a data.');
                 if (atual.status === 'concluido') throw new Error('Ação concluída: reverta a conclusão antes de alterar o prazo.');
                 if (atual.dataConclusaoPrazo === novaData) return true;
                 const nome = String(currentProfile.fullName || '').trim().toUpperCase();
@@ -1735,6 +1778,13 @@
                 <button class="sub-tab-btn" onclick="mudarSubAba('limpeza')">🧹 Limpeza</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('duplicados')">♻️ Duplicados</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('avisos')">⏰ Avisos de prazo</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('recusados')">❌ Recusados</button>
+            </div>
+
+            <div id="sub-aba-recusados" class="gestor-sub-content">
+                <h2 style="color:var(--primary);font-size:1.2rem;">Ações recusadas pela manutenção</h2>
+                <p style="color:var(--text-muted);font-size:0.85rem;">Desfaça a recusa para devolver a ação ao mesmo responsável na aba Usuário.</p>
+                <div id="listaGestorRecusados"></div>
             </div>
 
             <!-- SUB-ABA 1: PENDENTES -->
@@ -2261,7 +2311,7 @@
         function mudarSubAba(sub) {
             document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.gestor-sub-content').forEach(c => c.classList.remove('active'));
-            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7 };
+            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7, recusados: 8 };
             const indice = indices[sub];
             if (indice === undefined) return;
             document.querySelectorAll('.sub-tab-btn')[indice].classList.add('active');
@@ -2272,6 +2322,7 @@
             else if (sub === 'graficos') renderizarGraficosReais();
             else if (sub === 'duplicados') renderizarDuplicados();
             else if (sub === 'avisos') renderizarAvisosPrazo();
+            else if (sub === 'recusados') renderizarRecusadosGestor();
         }
 
         function normalizarChaveDuplicado(texto) {
@@ -2326,7 +2377,7 @@
             if (seletor.value !== limiteSalvo) seletor.value = limiteSalvo;
             const limite = Number(seletor.value) || 3;
             const itens = ocorrencias.filter(item => {
-                if (item.status === 'concluido' || item.tipoOcorrencia === 'Incidente' || !item.dataConclusaoPrazo) return false;
+                if (item.status === 'concluido' || item.status === 'recusado' || item.tipoOcorrencia === 'Incidente' || !item.dataConclusaoPrazo) return false;
                 const dias = calcularDiasRestantes(item.dataConclusaoPrazo);
                 return dias !== null && dias >= 0 && dias <= limite;
             }).sort((a,b) => calcularDiasRestantes(a.dataConclusaoPrazo) - calcularDiasRestantes(b.dataConclusaoPrazo));
@@ -2845,8 +2896,42 @@
             if (salvou) alert('Justificativa registrada.');
         }
         function podeProgramarPrazo(item) {
-            return !!item && item.status !== 'concluido' &&
+            return !!item && item.status !== 'concluido' && item.status !== 'recusado' &&
                 window.firebasePerfilAtual?.status === 'approved' && !!window.firebaseUsuarioAtual?.uid;
+        }
+
+        const decisoesManutencaoEmAndamento = new Set();
+        async function decidirManutencao(id, decisao) {
+            if (decisoesManutencaoEmAndamento.has(String(id))) return;
+            const item = ocorrencias.find(x => String(x.id) === String(id));
+            if (!item) return;
+            if (decisao === 'pendente' ? !window.firebasePodeGerenciar : !podeProgramarPrazo(item)) return;
+            const pergunta = decisao === 'recusada' ? 'Recusar esta ação e enviá-la para Recusados?' :
+                decisao === 'pendente' ? 'Desfazer a recusa e devolver esta ação à aba Usuário?' : 'Aceitar esta ação?';
+            if (!confirm(pergunta)) return;
+            decisoesManutencaoEmAndamento.add(String(id));
+            try {
+                await window.fbDecidirManutencao(id, decisao);
+            } finally {
+                decisoesManutencaoEmAndamento.delete(String(id));
+            }
+        }
+
+        function renderizarRecusadosGestor() {
+            const container = document.getElementById('listaGestorRecusados');
+            if (!container || !window.firebasePodeGerenciar) return;
+            const recusados = ocorrencias.filter(item => item.status === 'recusado');
+            container.innerHTML = recusados.length ? recusados.map(item => `
+                <div class="occurrence-card" style="border-left:4px solid var(--danger);">
+                    <div class="user-info-tag"><span class="badge-ticket">${escaparHtml(String(item.ticket || ''))}</span> ❌ Recusada</div>
+                    <p><strong>Descrição:</strong> ${escaparHtml(item.desc || '')}</p>
+                    <p><strong>Fábrica:</strong> ${escaparHtml(item.local || '')} · <strong>Setor:</strong> ${escaparHtml(item.setor || '')}</p>
+                    <p><strong>Responsável:</strong> ${escaparHtml(item.responsavel || 'Não definido')}</p>
+                    <p><strong>Recusada por:</strong> ${escaparHtml(item.manutencao?.usuario || 'Não informado')}</p>
+                    <p><strong>Data da recusa:</strong> ${item.manutencao?.em ? escaparHtml(new Date(item.manutencao.em).toLocaleString('pt-BR')) : 'Não informada'}</p>
+                    <p><strong>Prazo:</strong> ${formatarDataBR(item.dataConclusaoPrazo) || 'A DEFINIR'}</p>
+                    <button class="btn-primary" onclick="decidirManutencao(${Number(item.id)}, 'pendente')">↩️ Desfazer recusa e devolver ao usuário</button>
+                </div>`).join('') : '<p style="text-align:center;color:var(--text-muted);padding:15px;">Nenhuma ação recusada.</p>';
         }
         function alterarPrazoUsuario(id) {
             const item = ocorrencias.find(x => x.id === id);
@@ -3074,7 +3159,7 @@
             const tipoVisao = document.getElementById('tipoVisaoGraficoLocal').value;
             const ctx = document.getElementById('canvasGraficoLocalModal').getContext('2d');
 
-            let acoesDoLocal = ocorrencias.filter(x => x.local === localAtualModalGrafico && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
+            let acoesDoLocal = ocorrencias.filter(x => x.status !== 'recusado' && x.local === localAtualModalGrafico && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
 
             let labels = [];
             let dadosConcluidos = [];
@@ -3295,7 +3380,7 @@
                 const fGravidade = document.getElementById('filtroGlobalGravidade') ? document.getElementById('filtroGlobalGravidade').value : 'todos';
 
                 let ocorrenciasFiltradas = ocorrencias.filter(item => {
-                    if (item.tipoOcorrencia === 'Incidente') return false; 
+                    if (item.tipoOcorrencia === 'Incidente' || item.status === 'recusado') return false;
                     let matchPessoa = fPessoa === 'todos' || item.responsavel === fPessoa;
                     let matchMes = fMes === 'todos' || item.mes === fMes;
                     let matchAno = fAno === 'todos' || item.ano === fAno;
@@ -3428,7 +3513,11 @@
                                             let botaoAlterarPrazoUser = item.status === 'concluido' || !podeProgramarPrazo(item) ? '' : `
                                                 <div style="margin-top: 5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;" onclick="event.stopPropagation()">
                                                     <button class="btn-tool" onclick="alterarPrazoUsuario(${item.id})" style="background: #e5e7eb; color: var(--text-main); font-size: 0.7rem;">📅 Programar data</button>
+                                                    ${item.status === 'aprovado' ? `<button class="btn-approve" onclick="decidirManutencao(${item.id}, 'aceita')" ${item.manutencao?.decisao === 'aceita' ? 'disabled' : ''}>✅ ${item.manutencao?.decisao === 'aceita' ? 'Aceita' : 'Aceitar'}</button>
+                                                    <button class="btn-tool delete" onclick="decidirManutencao(${item.id}, 'recusada')">❌ Recusar</button>` : ''}
                                                     <span style="font-size: 0.7rem; color: var(--text-muted);"><strong>${formatarDataBR(item.dataConclusaoPrazo) || 'A DEFINIR'}</strong></span>
+                                                    ${item.manutencao?.decisao === 'aceita' ? `<span style="font-size:0.75rem;color:var(--success);">Aceita por ${escaparHtml(item.manutencao.usuario)}</span>` : ''}
+                                                    ${item.manutencao?.decisao === 'pendente' ? '<span style="font-size:0.75rem;color:var(--pending);">↩️ Recusa desfeita pela gestão. Aguardando nova decisão.</span>' : ''}
                                                 </div>
                                             `;
 
@@ -3643,6 +3732,7 @@
                 }
 
                 if (document.getElementById("sub-aba-avisos")?.classList.contains("active")) renderizarAvisosPrazo();
+                if (document.getElementById("sub-aba-recusados")?.classList.contains("active")) renderizarRecusadosGestor();
             if (document.getElementById("sub-aba-duplicados")?.classList.contains("active")) renderizarDuplicados();
             if (loader) loader.style.display = 'none';
             }, 30);
@@ -3723,7 +3813,7 @@
             const ocultarConc = document.getElementById('ocultarConcluidas') ? document.getElementById('ocultarConcluidas').checked : false;
 
             let listaAprovadas = ocorrencias.filter(item => {
-                if (item.tipoOcorrencia === 'Incidente') return false;
+                if (item.tipoOcorrencia === 'Incidente' || item.status === 'recusado') return false;
                 if (item.status === 'pendente') return false;
                 if (ocultarConc && item.status === 'concluido') return false;
 
@@ -3862,6 +3952,7 @@
 
         function concluirMobile(id) {
             const item = ocorrencias.find(x => x.id === id);
+            if (!item || item.status === 'recusado') return alert('A gestão precisa desfazer a recusa antes de concluir esta ação.');
             
             if (!item.temFoto) {
                 alert('⚠️ Validação: É obrigatório possuir a foto registrada!');
@@ -3911,7 +4002,7 @@
             const acidenteMod = document.getElementById('filtroAcidenteModificar') ? document.getElementById('filtroAcidenteModificar').value : 'todos';
 
             let listaModificar = ocorrencias.filter(item => {
-                if (item.tipoOcorrencia === 'Incidente') return false;
+                if (item.tipoOcorrencia === 'Incidente' || item.status === 'recusado') return false;
                 let matchBusca = item.ticket.toLowerCase().includes(buscaMod) || item.local.toLowerCase().includes(buscaMod) || item.setor.toLowerCase().includes(buscaMod) || item.desc.toLowerCase().includes(buscaMod) || (item.acaoAcidenteVinculado && item.acaoAcidenteVinculado.toLowerCase().includes(buscaMod));
                 
                 let matchStatus = true;
@@ -3972,7 +4063,7 @@
         }
 
         function renderizarGraficosReais() {
-            const acoes = ocorrencias.filter(x => !x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura');
+            const acoes = ocorrencias.filter(x => x.status !== 'recusado' && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
             const concluidas = acoes.filter(x => x.status === 'concluido').length;
             const vencidas = acoes.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length;
             // Cada ação aparece em apenas uma categoria: concluída, vencida ou em dia.
@@ -4263,6 +4354,7 @@
 
         function resolverDireto(id) {
             const item = ocorrencias.find(x => x.id === id);
+            if (!item || item.status === 'recusado') return alert('A gestão precisa desfazer a recusa antes de concluir esta ação.');
 
             if (item.status === 'concluido') {
                 alert("⚠️ Ação já concluída!");

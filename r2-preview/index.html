@@ -1650,6 +1650,68 @@
             cursor: pointer;
             color: var(--text-muted);
         }
+
+        /* Apresentação: preserva eventos, dados e regras existentes. */
+        body { padding:24px; background:#f3f7f4; }
+        body > header { max-width:1120px; margin:0 auto 24px; padding:28px 68px; border-radius:18px; box-sizing:border-box; }
+        .empresa-logo { display:block; width:114px; height:114px; object-fit:contain; margin:0 auto 14px; border-radius:12px; background:#fff; }
+        body > header h1 { font-size:1.8rem; line-height:1.25; margin:0 0 8px; letter-spacing:-.035em; }
+        .container { max-width:1120px; }
+        #aba-usuario .form-card { padding:26px; border:1px solid #dce7df; border-radius:16px; box-shadow:0 5px 18px rgba(20,65,40,.055); }
+        #aba-usuario .form-group label { color:#294b38; font-weight:600; }
+        #aba-usuario input:not([type="checkbox"]), #aba-usuario select, #aba-usuario textarea { box-sizing:border-box; border-color:#d3dfd7; border-radius:9px; }
+        #aba-usuario input:focus, #aba-usuario select:focus, #aba-usuario textarea:focus { outline:2px solid #78b591; outline-offset:2px; }
+        #aba-usuario input[readonly] { background:#f0f4f1; color:#4a6253; }
+        .lancamento-identificacao { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        #fotoUsuario { width:100%; padding:12px; background:#f7faf8; border:1px solid #dce7df; }
+        #fotoUsuario::file-selector-button { padding:9px 12px; border:1px solid #cbded1; border-radius:7px; background:#fff; color:#006837; margin-right:12px; font:inherit; }
+        #btnEnviarRegistro { width:100%; padding:14px 20px; border-radius:9px; font-weight:700; box-shadow:0 3px 8px rgba(0,104,55,.12); }
+        .acompanhamento-heading { padding:18px 20px!important; border-radius:14px!important; border-color:#dce7df!important; gap:16px; }
+        #listaSetoresUsuario > .fabrica-card { border:1px solid #dce7df; border-radius:16px; margin-bottom:18px; box-shadow:0 5px 18px rgba(20,65,40,.055); }
+        #listaSetoresUsuario .fabrica-header { background:#fff; padding:20px; gap:16px; align-items:flex-start; }
+        .fabrica-resumo { flex:1; min-width:0; }
+        .fabrica-identidade { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+        .fabrica-identidade strong { font-size:1.1rem; color:#194c30; overflow-wrap:anywhere; }
+        .fabrica-icone { display:flex; align-items:center; justify-content:center; width:42px; height:42px; flex-shrink:0; border-radius:10px; background:#eaf4ee; color:#006837; }
+        .fabrica-resumo .badges-contadores { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; width:100%; }
+        .fabrica-resumo .badge-count { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; border:0; border-radius:9px; font-size:.8rem; }
+        .fabrica-resumo .badge-count b { font-size:1.35rem; font-variant-numeric:tabular-nums; }
+        .fabrica-resumo .conc { background:#edf7f0; color:#216a46; }
+        .fabrica-resumo .pend { background:#fff8e8; color:#886219; }
+        .fabrica-resumo .atra { background:#fff0f0; color:#ac3540; }
+        .fabrica-acoes { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .fabrica-grafico { background:#fff!important; color:#006837!important; border:1px solid #cbded1!important; padding:8px 12px!important; border-radius:8px; font-size:.8rem!important; }
+        .fabrica-chevron { font-size:.9rem; color:#597462; }
+        #listaSetoresUsuario .fabrica-corpo { padding:18px 20px; background:#fafcfb; }
+        #listaSetoresUsuario .sub-filter-bar { padding:14px; border:1px solid #e0e9e3; border-radius:10px; background:#f0f5f2; gap:12px; }
+        #listaSetoresUsuario .sub-filter-bar > div { flex:1; min-width:160px; }
+        #listaSetoresUsuario .sub-filter-bar label { font-size:.75rem!important; margin-bottom:6px!important; color:#476250; }
+        #listaSetoresUsuario .sub-filter-bar select { width:100%; padding:10px; background:#fff; }
+        #listaSetoresUsuario .responsavel-card { margin:12px 0!important; border:1px solid #dce6df!important; border-radius:11px; box-shadow:none; }
+        #listaSetoresUsuario .responsavel-header { padding:14px 16px!important; background:#edf4ef!important; font-size:.9rem!important; gap:12px; }
+        #listaSetoresUsuario .responsavel-card .gestor-accordion-body { padding:14px; }
+        #listaSetoresUsuario .user-record-summary { gap:12px; }
+        #listaSetoresUsuario .photo-thumb { border-radius:9px; }
+        #listaSetoresUsuario .user-record-main { gap:12px; }
+        @media(max-width:640px) {
+            body { padding:12px; }
+            body > header { padding:22px 42px; border-radius:14px; }
+            body > header h1 { font-size:1.35rem; }
+            .empresa-logo { width:92px; height:92px; }
+            #aba-usuario .form-card { padding:18px; }
+            .lancamento-identificacao { grid-template-columns:1fr; gap:12px; }
+            .acompanhamento-heading { align-items:flex-start!important; flex-wrap:wrap; padding:14px!important; }
+            #listaSetoresUsuario .fabrica-header { padding:16px; flex-wrap:wrap; }
+            .fabrica-resumo { flex-basis:100%; }
+            .fabrica-resumo .badges-contadores { gap:6px; }
+            .fabrica-resumo .badge-count { flex-direction:column; align-items:flex-start; padding:9px; font-size:.7rem; }
+            #listaSetoresUsuario .fabrica-corpo { padding:14px; }
+            #listaSetoresUsuario .sub-filter-bar > div { min-width:100%; }
+            #listaSetoresUsuario .responsavel-header { padding:12px!important; }
+            #aba-usuario input, #aba-usuario select, #aba-usuario textarea { font-size:16px; max-width:100%; }
+            #btnToggleFormLancar, #btnToggleAcompanhamento { min-height:40px; }
+        }
+
     </style>
 </head>
 <body>
@@ -1689,6 +1751,7 @@
     </div>
 
     <header>
+        <img class="empresa-logo" src="https://www.laticiniosportoalegre.com.br/.imaging/flex/jcr%3A5e3e806f-8ac7-454a-8b4d-ccd20307514f/hash/1402626269/ratio/1%3A1/version/1787572055/width/336/lpa%20logo.jpg" alt="Laticínios Porto Alegre" width="114" height="114">
         <h1>Inspeção de Condições Inseguras</h1>
         <p style="margin: 4px 0 0 0; font-size: 0.8rem; opacity: 0.9;">Unidade 101</p>
         <button class="btn-gestor-hidden" id="botaoAdministracao" hidden style="display:none" onclick="solicitarAcessoGestor()" title="Acesso do Gestor">⚙️</button>
@@ -1720,7 +1783,7 @@
                         </select>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr; gap: 12px;">
+                    <div class="lancamento-identificacao">
                         <div class="form-group" style="margin-bottom:0;">
                             <label for="nomeUsuario">Seu nome de registro:</label>
                             <input type="text" id="nomeUsuario" placeholder="Preenchido pelo seu cadastro" readonly aria-readonly="true" title="Nome completo informado no cadastro">
@@ -1751,7 +1814,7 @@
                 </div>
             </div>
 
-            <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-top: 25px; margin-bottom: 12px; background: white; padding: 12px 16px; border-radius: 12px; border: 1px solid #e5e7eb;" onclick="toggleAcompanhamento()">
+            <div class="acompanhamento-heading" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-top: 25px; margin-bottom: 12px; background: white; padding: 12px 16px; border-radius: 12px; border: 1px solid #e5e7eb;" onclick="toggleAcompanhamento()">
                 <h2 style="color: var(--primary); font-size: 1.1rem; margin: 0;">Acompanhamento das Ações por Fábrica e Setor</h2>
                 <button class="btn-tool" id="btnToggleAcompanhamento" type="button" onclick="toggleAcompanhamento(); event.stopPropagation();">➖ Minimizar</button>
             </div>
@@ -3469,9 +3532,9 @@
 
                             let contadoresHtml = `
                                 <div class="badges-contadores">
-                                    <span class="badge-count conc">Concl: ${concluidasLocal}</span>
-                                    <span class="badge-count pend">Pend: ${pendentesLocal}</span>
-                                    <span class="badge-count atra">Venc: ${vencidasLocal}</span>
+                                    <span class="badge-count conc">Concluídas <b>${concluidasLocal}</b></span>
+                                    <span class="badge-count pend">Pendentes <b>${pendentesLocal}</b></span>
+                                    <span class="badge-count atra">Vencidas <b>${vencidasLocal}</b></span>
                                 </div>
                             `;
 
@@ -3608,8 +3671,8 @@
                                     : `<svg class="icone-seta seta-vermelha" viewBox="0 0 24 24"><path d="M12 20l8-8h-6v-8h-4v8h-6z"/></svg>`;
 
                                 conteudoInternoLocal += `
-                                    <div class="gestor-accordion-item" style="margin: 6px 0; border: 1px solid #d1d5db;">
-                                        <div class="gestor-accordion-header" style="background: #f3f4f6; padding: 10px 12px; font-size: 0.85rem;" onclick="toggleAcordeonRespNoSetor('${idAccordionResp}')">
+                                    <div class="gestor-accordion-item responsavel-card" style="margin: 6px 0; border: 1px solid #d1d5db;">
+                                        <div class="gestor-accordion-header responsavel-header" style="background: #f3f4f6; padding: 10px 12px; font-size: 0.85rem;" onclick="toggleAcordeonRespNoSetor('${idAccordionResp}')">
                                             <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                                                 ${svgSetaResp}
                                                 <span><strong>${respNome}</strong> ${badgeAVencerHtml}</span>
@@ -3625,21 +3688,23 @@
                             });
 
                             containerSetores.innerHTML += `
-                                <div class="gestor-accordion-item">
-                                    <div class="gestor-accordion-header" onclick="toggleExpandirSetor('${nomeLocal}')">
-                                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                                            <div style="display: flex; align-items: center;">
+                                <div class="gestor-accordion-item fabrica-card">
+                                    <div class="gestor-accordion-header fabrica-header" onclick="toggleExpandirSetor('${nomeLocal}')">
+                                        <div class="fabrica-resumo">
+                                            <div class="fabrica-identidade">
+                                                <span class="fabrica-icone" aria-hidden="true">🏭</span>
                                                 ${dotLocalHtml}
-                                                <strong style="font-size: 0.9rem;">${nomeLocal}</strong>
+                                                <strong>${nomeLocal}</strong>
                                             </div>
                                             ${contadoresHtml}
                                         </div>
-                                        <div style="display:flex; align-items:center; gap:6px;">
-                                            <button class="btn-tool" onclick="abrirGraficoLocalModal('${nomeLocal}'); event.stopPropagation();" style="background: var(--primary); color: white; border: none; font-size: 0.7rem; padding: 4px 8px;">📊 Gráfico</button>
+                                        <div class="fabrica-acoes">
+                                            <button class="btn-tool fabrica-grafico" onclick="abrirGraficoLocalModal('${nomeLocal}'); event.stopPropagation();" style="background: var(--primary); color: white; border: none; font-size: 0.7rem; padding: 4px 8px;">📊 Gráfico</button>
                                             <span style="font-size:0.75rem; background:#e5e7eb; padding:3px 8px; border-radius:10px; font-weight:600;">${pendentesLocal}</span>
+                                            <span class="fabrica-chevron" aria-hidden="true">${estaAbertoLocal ? '▲' : '▼'}</span>
                                         </div>
                                     </div>
-                                    <div class="gestor-accordion-body ${estaAbertoLocal}" id="corpo-setor-${nomeLocal}">
+                                    <div class="gestor-accordion-body fabrica-corpo ${estaAbertoLocal}" id="corpo-setor-${nomeLocal}">
                                         <div class="sub-filter-bar" onclick="event.stopPropagation()">
                                             <div>
                                                 <label style="font-size:0.65rem; font-weight:bold; display:block; margin-bottom:2px;">Filtrar Status:</label>

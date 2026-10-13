@@ -7,11 +7,12 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     
+    <script src="./units.js"></script>
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, updatePassword } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getDatabase, ref, set, onValue, remove, runTransaction, get, update, push, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, set, onValue, remove, runTransaction, get, update, push, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, query, orderByChild, equalTo } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         import { createPhotoStorage } from './photo-storage.js';
 
@@ -185,10 +186,29 @@
             if (!window.firebasePodeGerenciar) return alert("Apenas o administrador pode aprovar cadastros.");
             const perfil = userProfiles[uid];
             if (!perfil) return;
+            const unitId = document.getElementById('unidade-conta-' + uid)?.value || perfil.unitId || '';
+            if (status === 'approved' && perfil.role !== 'admin' && !window.unidadeValida(unitId)) return alert('Vincule a conta a uma unidade antes de aprovar.');
             try {
-                await update(ref(db, `users/${uid}`), { status, reviewedAt: Date.now(), reviewedBy: currentUser.uid });
+                await update(ref(db, 'users/' + uid), { ...(window.unidadeValida(unitId) ? { unitId } : {}), status, reviewedAt: Date.now(), reviewedBy: currentUser.uid });
                 await registrarAuditoria("cadastro", `${status}: ${perfil.username}`);
             } catch (error) { alert(`Não foi possível atualizar o cadastro: ${error.message}`); }
+        };
+
+        window.fbVincularContaUnidade = async function(uid, unitId) {
+            if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) return alert('Selecione uma unidade válida.');
+            try {
+                await update(ref(db, 'users/' + uid), { unitId });
+                await registrarAuditoria('unidade', 'Conta ' + uid + ': ' + unitId);
+                // As ligações por nome serão recalculadas após a mudança de unidade.
+                for (const item of ocorrenciasPorId.values()) {
+                    if (item.responsavelUid === uid && item.unitId !== unitId) {
+                        await runTransaction(ref(db, 'ocorrencias/' + item.id), atual => {
+                            if (!atual) return null;
+                            return atual.responsavelUid === uid && atual.unitId !== unitId ? { ...atual, responsavelUid: '' } : atual;
+                        });
+                    }
+                }
+            } catch (error) { alert('Não foi possível vincular a conta: ' + error.message); }
         };
 
         onAuthStateChanged(auth, async user => {
@@ -204,6 +224,12 @@
             if (stopAdminAuditListener) { stopAdminAuditListener(); stopAdminAuditListener = null; }
             stopCoreDataListeners.forEach(stop => stop());
             stopCoreDataListeners = [];
+            ocorrenciasPorId.clear();
+            ocorrencias = [];
+            listaGestores = [];
+            listaSetoresCadastrados = [];
+            userProfiles = {};
+            agendarRenderFirebase();
             currentUser = user;
             currentProfile = null;
             window.firebaseUsuarioAtual = user;
@@ -245,11 +271,18 @@
                     ocorrencias = [];
                     localStorage.removeItem("cache_ocorrencias");
                 }
+                if (!window.firebasePodeGerenciar && !window.unidadeValida(currentProfile.unitId)) {
+                    mostrarAcesso('Seu acesso está aprovado. Aguarde o administrador vincular sua conta a uma unidade.', false);
+                    stopOwnProfileListener = onValue(profileRef, snapshot => {
+                        if (snapshot.val()?.status !== 'approved' || window.unidadeValida(snapshot.val()?.unitId)) window.location.reload();
+                    });
+                    return;
+                }
                 document.body.classList.add("auth-ok");
                 document.getElementById("authGate").style.display = "none";
                 iniciarListenersDadosAprovados();
                 const badge = document.getElementById("contaAtual");
-                if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador" : "Usuário aprovado"})`;
+                if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
                 const nomeRegistro = document.getElementById("nomeUsuario");
                 if (nomeRegistro) {
                     const administrador = currentProfile.role === "admin";
@@ -270,6 +303,17 @@
                         mostrarAcesso("Seu acesso foi suspenso pelo administrador.", false);
                         signOut(auth);
                     } else {
+                        if (atual.role !== currentProfile.role || atual.unitId !== currentProfile.unitId) {
+                            stopCoreDataListeners.forEach(stop => stop());
+                            cacheFotos.clear();
+                            cargasFotos.clear();
+                            limparCacheDaConta(currentUser.uid);
+                            ocorrenciasPorId.clear();
+                            ocorrencias = [];
+                            document.body.classList.remove('auth-ok');
+                            window.location.reload();
+                            return;
+                        }
                         currentProfile = atual;
                         window.firebasePerfilAtual = atual;
                     }
@@ -533,6 +577,16 @@
             try {
                 if (!currentUser || !currentProfile || currentProfile.status !== "approved") throw new Error("Entre com uma conta aprovada.");
                 const registro = { ...item };
+                const anterior = ocorrenciasPorId.get(String(registro.id));
+                const unitId = window.unidadeDaFabrica(registro.local, listaSetoresCadastrados);
+                if (!window.firebasePodeGerenciar) {
+                    if (!window.unidadeValida(currentProfile.unitId) || unitId !== currentProfile.unitId || (anterior && anterior.unitId !== currentProfile.unitId)) throw new Error('Esta fábrica não pertence à sua unidade.');
+                    registro.unitId = currentProfile.unitId;
+                } else if (unitId) registro.unitId = unitId;
+                else if (!anterior && !registro.unitId) throw new Error('Vincule a fábrica a uma unidade antes de lançar o registro.');
+                if (window.firebasePodeGerenciar && registro.unitId && registro.responsavel && userProfiles[registro.responsavelUid]?.unitId !== registro.unitId) {
+                    registro.responsavelUid = encontrarContaResponsavelPorNome(registro.responsavel, userProfiles, registro.unitId) || '';
+                }
                 const fotosParaSalvar = {};
                 registro.versoesFotoCache = { ...(registro.versoesFotoCache || {}) };
                 if (!window.firebasePodeGerenciar && camposFoto.some(campo => fotosPendentesMigracao.has(`${registro.id}/${campo}`))) {
@@ -688,6 +742,38 @@
             }
         };
 
+        window.fbVincularCadastroUnidade = async function(tipo, nome, unitId) {
+            if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) return alert('Selecione uma unidade válida.');
+            const caminho = tipo === 'fabrica' ? 'config/setores' : 'config/gestores';
+            try {
+                const snap = await get(ref(db, caminho));
+                const cadastros = snap.val() || {};
+                const entradas = Object.entries(cadastros).filter(([, c]) => c.nome === nome);
+                if (!entradas.length) throw new Error('Cadastro não encontrado. Atualize a página.');
+                if (tipo === 'responsavel' && listaSetoresCadastrados.some(s => s.responsavel === nome && s.unitId && s.unitId !== unitId)) throw new Error('Este responsável tem fábrica em outra unidade. Revise os vínculos primeiro.');
+                if (tipo === 'fabrica' && entradas.some(([, s]) => !listaGestores.some(g => g.nome === s.responsavel && g.unitId === unitId))) throw new Error('Vincule todos os responsáveis desta fábrica à mesma unidade primeiro.');
+                const mudancas = {};
+                entradas.forEach(([key]) => { mudancas[key + '/unitId'] = unitId; });
+                await update(ref(db, caminho), mudancas);
+                if (tipo === 'fabrica') {
+                    const registros = await get(ocorrenciasRef);
+                    for (const [id, item] of Object.entries(registros.val() || {})) {
+                        if (String(item.local || '').trim().toUpperCase() !== nome.trim().toUpperCase()) continue;
+                        const resultado = await runTransaction(ref(db, 'ocorrencias/' + id), atual => {
+                            if (!atual) return null; // Permite a primeira tentativa sem cache e a repetição com o estado do servidor.
+                            if (String(atual.local || '').trim().toUpperCase() !== nome.trim().toUpperCase()) return;
+                            const novo = { ...atual, unitId };
+                            novo.responsavelUid = encontrarContaResponsavelPorNome(atual.responsavel, userProfiles, unitId) || '';
+                            return novo;
+                        });
+                        if (!resultado.committed) throw new Error('Um registro mudou durante o vínculo. Salve a unidade da fábrica novamente para completar.');
+                    }
+                }
+                await registrarAuditoria('unidade', tipo + ' ' + nome + ': ' + unitId);
+                alert('Unidade vinculada com sucesso.');
+            } catch (error) { alert('Vínculo incompleto: ' + error.message + ' Você pode salvar novamente para completar o histórico.'); }
+        };
+
         window.fbSalvarGestores = function(gestores) {
             if (!window.firebasePodeGerenciar) return Promise.reject(new Error("Apenas o administrador pode alterar responsáveis."));
             return set(ref(db, 'config/gestores'), gestores).then(() => registrarAuditoria("configuração", "Responsáveis atualizados"));
@@ -767,11 +853,11 @@
             agendarRenderFirebase();
         }
 
-        function encontrarContaResponsavelPorNome(nomeResponsavel, perfis) {
+        function encontrarContaResponsavelPorNome(nomeResponsavel, perfis, unitId = '') {
             const normalizar = valor => String(valor || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
             const nome = normalizar(nomeResponsavel);
             if (!nome) return null;
-            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && normalizar(perfil.fullName));
+            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && (!unitId || perfil.unitId === unitId) && normalizar(perfil.fullName));
             const exatos = aprovados.filter(([, perfil]) => normalizar(perfil.fullName) === nome);
             if (exatos.length) return exatos.length === 1 ? exatos[0][0] : null;
             const primeiroNome = nome.split(' ')[0];
@@ -783,7 +869,7 @@
         function vincularResponsavelLegado(item) {
             // Completa somente a ligação da conta de login; fábrica, setor e responsável permanecem intactos.
             if (item.responsavelUid) return;
-            const uid = encontrarContaResponsavelPorNome(item.responsavel, userProfiles);
+            const uid = encontrarContaResponsavelPorNome(item.responsavel, userProfiles, item.unitId);
             if (!uid) return;
             set(ref(db, `ocorrencias/${item.id}/responsavelUid`), uid)
                 .then(() => registrarAuditoria("migração", `Ação ${item.ticket || item.id} vinculada à conta aprovada`))
@@ -818,15 +904,16 @@
             stopCoreDataListeners.forEach(stop => stop());
             stopCoreDataListeners = [];
             atualizarStatusCarregamentoOcorrencias("carregando");
-            stopCoreDataListeners.push(onChildAdded(ocorrenciasRef, aplicarOcorrenciaRemota, error => {
+            const fonteOcorrencias = window.firebasePodeGerenciar ? ocorrenciasRef : query(ocorrenciasRef, orderByChild('unitId'), equalTo(currentProfile.unitId));
+            stopCoreDataListeners.push(onChildAdded(fonteOcorrencias, aplicarOcorrenciaRemota, error => {
                 console.error("Falha ao ler ocorrências do Firebase:", error);
                 atualizarStatusCarregamentoOcorrencias("erro", error?.message || "A leitura foi recusada.");
             }));
-            stopCoreDataListeners.push(onChildChanged(ocorrenciasRef, aplicarOcorrenciaRemota, error => {
+            stopCoreDataListeners.push(onChildChanged(fonteOcorrencias, aplicarOcorrenciaRemota, error => {
                 console.error("Falha ao acompanhar alterações das ocorrências:", error);
                 atualizarStatusCarregamentoOcorrencias("erro", error?.message || "A leitura foi recusada.");
             }));
-            stopCoreDataListeners.push(onChildRemoved(ocorrenciasRef, snapshot => {
+            stopCoreDataListeners.push(onChildRemoved(fonteOcorrencias, snapshot => {
                 apagarFotoPersistida(currentUser?.uid, snapshot.key).catch(() => {});
                 ocorrenciasPorId.delete(snapshot.key);
                 ocorrencias = Array.from(ocorrenciasPorId.values()).sort((a, b) => b.id - a.id);
@@ -836,7 +923,7 @@
                 console.error("Falha ao acompanhar remoções de ocorrências:", error);
                 atualizarStatusCarregamentoOcorrencias("erro", error?.message || "A leitura foi recusada.");
             }));
-            get(ocorrenciasRef).then(snapshot => {
+            get(fonteOcorrencias).then(snapshot => {
                 const total = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
                 atualizarStatusCarregamentoOcorrencias(total ? "ok" : "vazio", total ? `${total} registro(s) carregado(s) do banco.` : "");
             }).catch(error => {
@@ -845,14 +932,12 @@
             });
             stopCoreDataListeners.push(onValue(ref(db, 'config/gestores'), snapshot => {
                 const data = snapshot.val();
-                listaGestores = data ? Object.values(data) : [];
-                if (data) localStorage.setItem('cache_gestores', JSON.stringify(listaGestores));
+                listaGestores = Object.values(data || {}).filter(g => window.firebasePodeGerenciar || g.unitId === currentProfile.unitId);
                 agendarRenderFirebase();
             }, error => console.error("Falha ao carregar responsáveis:", error)));
             stopCoreDataListeners.push(onValue(ref(db, 'config/setores'), snapshot => {
                 const data = snapshot.val();
-                listaSetoresCadastrados = data ? Object.values(data) : [];
-                if (data) localStorage.setItem('cache_setores', JSON.stringify(listaSetoresCadastrados));
+                listaSetoresCadastrados = Object.values(data || {}).filter(s => window.firebasePodeGerenciar || s.unitId === currentProfile.unitId);
                 agendarRenderFirebase();
             }, error => console.error("Falha ao carregar fábricas e setores:", error)));
         }
@@ -1872,8 +1957,14 @@
                 </div>
 
                 <div class="form-card" style="margin-bottom: 15px;">
+                    <h2>Vincular unidades</h2>
+                    <p>Vincule os responsáveis e as fábricas existentes. Ao vincular uma fábrica, seu histórico acompanha a unidade, preservando fotos, prazos e protocolos. Depois, vincule as contas de acesso acima.</p>
+                    <div id="listaVinculosUnidades"></div>
+                </div>
+                <div class="form-card" style="margin-bottom: 15px;">
                     <h2>Gerenciar Responsáveis e WhatsApp</h2>
                     <div class="approval-grid" style="margin-bottom: 8px;">
+                        <select id="novoGestorUnidade" aria-label="Unidade do responsável"></select>
                         <input type="text" id="novoGestorNome" placeholder="Nome do responsável...">
                         <input type="text" id="novoGestorFone" placeholder="WhatsApp (Ex: 31999999999)...">
                     </div>
@@ -1887,6 +1978,7 @@
                 <div class="form-card" style="margin-bottom: 15px;">
                     <h2>Cadastro de Fábricas</h2>
                     <div class="approval-grid" style="margin-bottom: 8px;">
+                        <select id="novoSetorUnidade" aria-label="Unidade da fábrica" onchange="renderizarTelas()"></select>
                         <input type="text" id="novoSetorNome" placeholder="Nome da Fábrica (Ex: Queijo)...">
                         <select id="novoSetorResponsavel">
                             <option value="">Selecione o Responsável...</option>
@@ -2205,8 +2297,10 @@
 
         localStorage.removeItem('cache_ocorrencias');
         let ocorrencias = [];
-        let listaGestores = lerCacheArray('cache_gestores');
-        let listaSetoresCadastrados = lerCacheArray('cache_setores');
+        localStorage.removeItem('cache_gestores');
+        localStorage.removeItem('cache_setores');
+        let listaGestores = [];
+        let listaSetoresCadastrados = [];
         
         setTimeout(() => { renderizarTelas(); }, 10);
 
@@ -2623,11 +2717,30 @@
             alert(`Backup gerado com sucesso e ${paraRemover.length} ocorrência(s) removida(s) do Firebase!`);
         }
 
+        function renderizarVinculosUnidades() {
+            const destino = document.getElementById('listaVinculosUnidades');
+            if (!destino) return;
+            // Mantém seleções em andamento durante atualizações remotas.
+            const selecoes = new Map([...destino.querySelectorAll('select')].map(s => [s.id, s.value]));
+            const linha = (tipo, nome, unitId, indice, detalhe = '') => {
+                const id = 'vinculo-' + tipo + '-' + indice;
+                return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><strong>' + escaparHtml(nome) + '</strong><small>' + escaparHtml(detalhe) + '</small><select id="' + id + '" aria-label="Unidade de ' + escaparHtml(nome) + '">' + window.opcoesUnidades(selecoes.get(id) || unitId) + '</select><button class="btn-primary" data-tipo="' + tipo + '" data-nome="' + escaparHtml(nome) + '" data-select="' + id + '">Salvar unidade</button></div>';
+            };
+            destino.innerHTML = '<h3>Responsáveis</h3>' + listaGestores.map((g, i) => linha('responsavel', g.nome, g.unitId, i)).join('') + '<h3>Fábricas</h3>' + [...new Set(listaSetoresCadastrados.map(s => s.nome))].map((nome, i) => linha('fabrica', nome, window.unidadeDaFabrica(nome, listaSetoresCadastrados), i, ocorrencias.filter(o => o.local === nome && !o.unitId).length + ' registro(s) sem unidade')).join('');
+            destino.querySelectorAll('button').forEach(b => b.onclick = async () => {
+                b.disabled = true;
+                await window.fbVincularCadastroUnidade(b.dataset.tipo, b.dataset.nome, document.getElementById(b.dataset.select).value);
+                b.disabled = false;
+            });
+        }
+
         function adicionarGestor() {
             const inputNome = document.getElementById('novoGestorNome');
             const inputFone = document.getElementById('novoGestorFone');
             const nome = inputNome.value.trim().toUpperCase();
             const fone = inputFone.value.trim().replace(/\D/g, '');
+            const unitId = document.getElementById('novoGestorUnidade').value;
+            if (!window.unidadeValida(unitId)) return alert('Selecione a unidade do responsável.');
 
             if (!nome) {
                 alert("Digite o nome do responsável.");
@@ -2636,10 +2749,11 @@
 
             let existente = listaGestores.find(g => g.nome === nome);
             if (existente) {
+                if (existente.unitId !== unitId) return alert('Use Vincular unidades para mudar a unidade deste responsável.');
                 existente.fone = fone || existente.fone;
                 alert("Dados do responsável atualizados com sucesso!");
             } else {
-                listaGestores.push({ nome, fone });
+                listaGestores.push({ nome, fone, unitId });
                 alert("Responsável cadastrado com sucesso!");
             }
 
@@ -2653,6 +2767,7 @@
             const painel = document.getElementById('painelContasAcesso');
             const destino = document.getElementById('listaCadastrosPendentes');
             if (!painel || !destino || !window.firebasePodeGerenciar) return;
+            const selecoes = new Map([...destino.querySelectorAll('select')].map(s => [s.id, s.value]));
             painel.style.display = 'block';
             const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : {};
             const pendentes = Object.entries(perfis).filter(([, p]) => p && p.status === 'pending');
@@ -2661,15 +2776,16 @@
                 <div style="font-weight:700;margin-bottom:6px;">Em validação</div>
                 ${pendentes.length ? pendentes.map(([uid, p]) => `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin:6px 0;">
-                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<small style="display:block;color:var(--text-muted);">UID ${escaparHtml(uid)}</small></span>
+                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><small style="display:block;color:var(--text-muted);">UID ${escaparHtml(uid)}</small></span>
                         <span style="display:flex;gap:6px;"><button class="btn-primary" onclick="aprovarCadastro('${uid}','approved')">Aprovar</button><button class="btn-tool delete" onclick="aprovarCadastro('${uid}','rejected')">Recusar</button></span>
                     </div>`).join('') : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhum cadastro aguardando aprovação.</p>'}
                 <div style="font-weight:700;margin:14px 0 6px;">Contas aprovadas</div>
                 ${aprovadas.length ? aprovadas.map(([uid, p]) => `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin:6px 0;">
-                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}</span>
+                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button></span>
                         <button class="btn-tool delete" onclick="removerContaAprovada('${uid}')">🗑️ Remover conta</button>
                     </div>`).join('') : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhuma conta aprovada para remoção.</p>'}`;
+            destino.querySelectorAll('select').forEach(s => { if (selecoes.has(s.id)) s.value = selecoes.get(s.id); });
         };
 
         window.removerContaAprovada = async function (uid) {
@@ -2798,6 +2914,10 @@
         function cadastrarSetor() {
             const nomeSetor = document.getElementById('novoSetorNome').value.trim().toUpperCase();
             const respSetor = document.getElementById('novoSetorResponsavel').value;
+            const unitId = document.getElementById('novoSetorUnidade').value;
+            if (!window.unidadeValida(unitId)) return alert('Selecione a unidade da fábrica.');
+            if (!listaGestores.some(g => g.nome === respSetor && g.unitId === unitId)) return alert('Vincule primeiro o responsável à mesma unidade.');
+            if (listaSetoresCadastrados.some(s => s.nome === nomeSetor && s.unitId !== unitId)) return alert('Este nome de fábrica já existe em outra unidade. Use um nome distinto.');
             if (!nomeSetor || !respSetor) {
                 alert("Preencha o nome da fábrica e selecione o responsável.");
                 return;
@@ -2806,7 +2926,7 @@
                 alert("Esta fábrica já está cadastrada para este responsável.");
                 return;
             }
-            listaSetoresCadastrados.push({ nome: nomeSetor, responsavel: respSetor });
+            listaSetoresCadastrados.push({ nome: nomeSetor, responsavel: respSetor, unitId });
             window.fbSalvarSetores(listaSetoresCadastrados);
             document.getElementById('novoSetorNome').value = '';
             document.getElementById('novoSetorResponsavel').value = '';
@@ -3416,6 +3536,11 @@
             if (loader) loader.style.display = 'block';
 
             setTimeout(() => {
+                ['novoGestorUnidade', 'novoSetorUnidade'].forEach(id => {
+                    const select = document.getElementById(id);
+                    if (select) { const valor = select.value; select.innerHTML = window.opcoesUnidades(valor); }
+                });
+                if (window.firebasePodeGerenciar) { renderizarVinculosUnidades(); window.renderizarCadastrosAcesso(); }
                 const tagsDiv = document.getElementById('tagsGestoresCadastrados');
                 if (tagsDiv) {
                     tagsDiv.innerHTML = listaGestores.map(g => `<span class="chip-gestor">👤 ${g.nome} ${g.fone ? '📞('+g.fone+')' : ''} <button onclick="removerGestor('${g.nome}')">×</button></span>`).join('');
@@ -3423,13 +3548,15 @@
 
                 const selectRespSetor = document.getElementById('novoSetorResponsavel');
                 if (selectRespSetor) {
-                    selectRespSetor.innerHTML = '<option value="">Selecione o Responsável...</option>' + listaGestores.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
+                    const valorAtual = selectRespSetor.value;
+                    selectRespSetor.innerHTML = '<option value="">Selecione o Responsável...</option>' + listaGestores.filter(g => g.unitId === document.getElementById('novoSetorUnidade').value).map(g => `<option value="${escaparHtml(g.nome)}">${escaparHtml(g.nome)}</option>`).join('');
+                    selectRespSetor.value = valorAtual;
                 }
 
                 const selectLocalUsuario = document.getElementById('localUsuario');
                 if (selectLocalUsuario) {
                     let localUsuarioAtual = selectLocalUsuario.value;
-                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.filter(s => window.unidadeValida(s.unitId)).map(s => s.nome))];
                     selectLocalUsuario.innerHTML = '<option value="">Selecione a Fábrica...</option>' + locaisUnicosCadastrados.map(loc => `<option value="${loc}">${loc}</option>`).join('');
                     selectLocalUsuario.value = localUsuarioAtual;
                 }
@@ -4309,7 +4436,7 @@
             }
 
             // A lista de troca vem exclusivamente do Cadastro de Fábricas.
-            const cadastros = listaSetoresCadastrados.filter(s => String(s.responsavel || '').trim());
+            const cadastros = listaSetoresCadastrados.filter(s => String(s.responsavel || '').trim() && s.unitId === item.unitId);
             const responsaveis = [...new Map(cadastros.map(s => {
                 const nome = String(s.responsavel || '').trim();
                 const fabrica = String(s.nome || '').trim();
@@ -4347,7 +4474,7 @@
                 item.responsavel = novoResponsavel;
                 // A atribuição é baseada no Cadastro de Fábricas. UID é apenas um vínculo opcional de acesso/login.
                 const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : (window.firebaseUserProfiles || {});
-                item.responsavelUid = window.encontrarContaResponsavelPorNome(novoResponsavel, perfis) || '';
+                item.responsavelUid = window.encontrarContaResponsavelPorNome(novoResponsavel, perfis, item.unitId) || '';
 
                 Promise.resolve(window.fbSalvarOcorrencia(item)).then(salvou => {
                     if (salvou === false) return;
@@ -4402,7 +4529,7 @@
             item.validor = document.getElementById(`validor-${id}`).value.trim().toUpperCase();
             item.responsavel = document.getElementById(`resp-${id}`).value.trim();
             const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : {};
-            item.responsavelUid = window.encontrarContaResponsavelPorNome(item.responsavel, perfis) || '';
+            item.responsavelUid = window.encontrarContaResponsavelPorNome(item.responsavel, perfis, item.unitId) || '';
             let prazoInputVal = document.getElementById(`prazo-${id}`).value;
             
             item.dataConclusaoPrazo = prazoInputVal || '';

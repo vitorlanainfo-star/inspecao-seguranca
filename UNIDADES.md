@@ -16,6 +16,8 @@ O catálogo contém: 101 Ponte, 102 Mutum, 103 Contagem, 104 Rio Pomba, 105 Muri
 
 ## Armazenamento
 
+O encaminhamento dos novos uploads para R2 próprios está preparado em `cloudflare/worker.js`; publicação e destinos reais ainda precisam ser configurados. Consulte [ROTEAMENTO.md](cloudflare/ROTEAMENTO.md). Sem `UNIT_GATEWAYS` configurado, todas as unidades continuam no armazenamento atual. Os e-mails criados não ativam destinos R2 automaticamente.
+
 Separar por unidade reduz os registros transferidos e mantidos na memória de cada usuário. As fotos continuam no bucket R2 privado existente, carregadas sob demanda. Isso **não divide a capacidade ou a cobrança do banco e do bucket**. Criar contas de e-mail adicionais no mesmo projeto não cria armazenamento independente. Distribuição física exigiria configurar outros bancos/buckets e adaptar autenticação, migração e operação; esta alteração não faz essa migração.
 
 O catálogo de responsáveis e fábricas contém metadados pequenos, lidos do caminho existente e filtrados na interface. Ocorrências e fotos têm isolamento no servidor. O administrador continua carregando os metadados de todas as ocorrências. Não há arquivamento ou exclusão automática.

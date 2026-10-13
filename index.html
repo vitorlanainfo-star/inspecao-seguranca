@@ -612,7 +612,7 @@
                 // Upload first. A failed upload cannot publish a record with a missing photo.
                 // References and version metadata are committed atomically in Firebase.
                 for (const [campo, foto] of Object.entries(fotosParaSalvar)) {
-                    alteracoes[`fotos/${registro.id}/${campo}`] = await photoStorage.upload(registro.id, campo, foto);
+                    alteracoes[`fotos/${registro.id}/${campo}`] = await photoStorage.upload(registro.id, campo, foto, registro.unitId || '');
                 }
                 await update(ref(db), alteracoes);
                 for (const [campo, foto] of Object.entries(fotosParaSalvar)) {

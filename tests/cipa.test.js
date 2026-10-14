@@ -73,3 +73,10 @@ test('Excel reads permitted configuration children and never the restricted conf
  const part=html.slice(html.indexOf('window.fbPrepararArquivoExcel ='),html.indexOf('async function carregarFotoNoElemento'));
  assert.match(part,/get\(ref\(db,'config\/gestores'\)\)/);assert.match(part,/get\(ref\(db,'config\/setores'\)\)/);assert.doesNotMatch(part,/get\(ref\(db,\s*'config'\)\)/);
 });
+test('management navigation activates the CIPA tab and renders its unit controls',()=>{
+ const buttons=Array.from({length:11},()=>({active:false,classList:{remove(){},add(){buttons[10].active=true;}}}));
+ const content={active:false,classList:{add(){content.active=true;}}};let rendered=0;
+ const start=html.indexOf('function mudarSubAba('),end=html.indexOf('function normalizarChaveDuplicado(',start);
+ const c={document:{querySelectorAll:selector=>selector==='.sub-tab-btn'?buttons:[],getElementById:id=>{assert.equal(id,'sub-aba-cipa');return content;}},renderizarGestorCipa:()=>rendered++};
+ vm.runInNewContext(html.slice(start,end),c);c.mudarSubAba('cipa');assert.equal(content.active,true);assert.equal(buttons[10].active,true);assert.equal(rendered,1);
+});

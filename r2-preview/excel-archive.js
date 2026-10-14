@@ -75,7 +75,17 @@ export async function criarArquivoExcel({ExcelJS, registros, lerFoto, configurac
         if(index%2===0) row.eachCell(cell=>cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF0F7F3'}});
         const original={...item}; delete original.foto; delete original.fotoConclusao; guardarOriginal('ocorrencia',item.id,original);
         for(const [campo,col] of [['foto',19],['fotoConclusao',20]]) {
-            const data=await lerFoto(item,campo); validar();
+            let data;
+            for(let tentativa=0;tentativa<3;tentativa++) {
+                validar();
+                try { data=await lerFoto(item,campo); break; }
+                catch(error) {
+                    const temporario=/timeout|timed out|network|fetch|HTTP 50[234]|HTTP 429/i.test(error.message || '');
+                    if(!temporario || tentativa===2) throw new Error('Não foi possível ler a foto do protocolo '+(item.ticket || item.id)+' ('+campo+'): '+error.message);
+                    progresso(index+1,registros.length);
+                }
+            }
+            validar();
             if (!data) { if(item[campo] || item[campo==='foto'?'temFoto':'temFotoConclusao']) throw new Error(`Foto ausente no protocolo ${item.ticket || item.id} (${campo}). O arquivo não foi baixado; não limpe o banco.`); continue; }
             const match=data.match(/^data:image\/(jpeg|png|gif);base64,/);
             if(!match) throw new Error(`Formato de imagem não suportado no protocolo ${item.ticket || item.id}.`);

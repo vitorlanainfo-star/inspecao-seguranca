@@ -2708,7 +2708,7 @@
         function mudarSubAba(sub) {
             document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.gestor-sub-content').forEach(c => c.classList.remove('active'));
-            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7, recusados: 8, cadastros: 9 };
+            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7, recusados: 8, cadastros: 9, cipa: 10 };
             const indice = indices[sub];
             if (indice === undefined) return;
             document.querySelectorAll('.sub-tab-btn')[indice].classList.add('active');
@@ -2720,6 +2720,7 @@
             else if (sub === 'duplicados') renderizarDuplicados();
             else if (sub === 'avisos') renderizarAvisosPrazo();
             else if (sub === 'recusados') renderizarRecusadosGestor();
+            else if (sub === 'cipa') renderizarGestorCipa();
         }
 
         function normalizarChaveDuplicado(texto) {

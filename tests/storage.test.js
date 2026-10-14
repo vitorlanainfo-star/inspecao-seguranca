@@ -37,6 +37,12 @@ function fixture({ profile = { status: 'approved', role: 'user' }, reference = d
     }), env);
     return { send, objects, calls };
 }
+
+test('approved CIPA accounts cannot read, upload or delete inspection photos',async()=>{
+    const f=fixture({profile:{status:'approved',role:'cipa',unitId:'101'}});
+    for(const method of ['GET','POST','DELETE']) assert.equal((await f.send(method,{body:method==='POST'?jpeg:undefined})).status,403);
+    assert.equal(f.calls.filter(c=>['put','get','delete'].includes(c[0])).length,0);
+});
 test('disabled configuration preserves legacy photos without any network request', async () => {
     const store = createPhotoStorage({ apiUrl: '', getUser: () => null, fetchImpl: () => assert.fail('network') });
     assert.equal(store.enabled, false);

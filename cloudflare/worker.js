@@ -38,7 +38,7 @@ export function createHandler(fetchImpl = fetch) {
         if (!account?.localId || account.disabled) throw new HttpError(401, 'Conta indisponível.');
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(account.localId)) throw new HttpError(401, 'Conta inválida.');
         const profile = await firebaseRead(env, `users/${account.localId}`, token);
-        if (profile?.status !== 'approved') throw new HttpError(403, 'Sua conta precisa estar aprovada.');
+        if (profile?.status !== 'approved' || profile.role === 'cipa') throw new HttpError(403, 'Sua conta não tem acesso às fotos de inspeções.');
         return { token, uid: account.localId, admin: profile.role === 'admin', unitId: profile.unitId || '', allUnits: profile.allUnits === true };
     }
     return async function handle(request, env) {

@@ -213,10 +213,61 @@
 
         window.fbDefinirAcessoTodasUnidades = async function(uid, allUnits) {
             if (!window.firebasePodeGerenciar) return alert('Apenas o administrador pode alterar acessos.');
+            if (userProfiles[uid]?.role === 'cipa') return alert('Contas CIPA ficam limitadas à unidade cadastrada.');
             try {
                 await update(ref(db, 'users/' + uid), { allUnits: allUnits === true });
                 await registrarAuditoria('unidade', 'Conta ' + uid + ': acesso a todas as unidades ' + (allUnits ? 'concedido' : 'revogado'));
             } catch (error) { alert('Não foi possível alterar o acesso: ' + error.message); }
+        };
+
+        window.fbDefinirPerfilConta = async (uid, role) => {
+            if (!window.firebasePodeGerenciar || !['user','cipa'].includes(role) || !userProfiles[uid] || userProfiles[uid].role === 'admin') return;
+            const unitId = document.getElementById('unidade-conta-' + uid)?.value || userProfiles[uid].unitId;
+            if (!window.unidadeValida(unitId)) return alert('Selecione uma unidade para a conta.');
+            try { await update(ref(db, `users/${uid}`), {role,unitId,...(role === 'cipa' ? {allUnits:false} : {})}); await registrarAuditoria('perfil', `Conta ${uid}: ${role} / ${unitId}`); }
+            catch(error) { alert('Não foi possível alterar o perfil: ' + error.message); }
+        };
+        window.fbEnviarCipa = async mensagem => {
+            if (currentProfile?.role !== 'cipa' || currentProfile.status !== 'approved' || !window.unidadeValida(currentProfile.unitId)) throw new Error('Entre com uma conta CIPA vinculada à sua unidade.');
+            const uid = currentUser.uid, unitId = currentProfile.unitId;
+            const destino = push(ref(db, `cipa/${unitId}`));
+            await set(destino, {mensagem,unitId,autorUid:uid,autor:currentProfile.fullName,criadoEm:serverTimestamp(),status:'novo'});
+            return destino.key;
+        };
+        window.fbConverterParaCipa = async id => {
+            if (!window.firebasePodeGerenciar) throw new Error('Apenas o administrador pode converter registros.');
+            const destino = ref(db, `ocorrencias/${id}`);
+            const snap = await get(destino); const item = snap.val();
+            if (!item || item.status === 'cipa' || !window.unidadeValida(item.unitId)) throw new Error('Registro indisponível para conversão.');
+            const chave = 'acao_' + id;
+            const historicoConversoes = [...(item.historicoConversoes || []), {tipo:'Fala CIPA',em:Date.now(),por:currentUser.uid}];
+            // Referência mínima mantém o endereço das fotos privado e permite restaurar a ação.
+            const referencia = {id:item.id,unitId:item.unitId,status:'cipa',tipoOcorrencia:'Fala CIPA',temFoto:!!item.temFoto,temFotoConclusao:!!item.temFotoConclusao};
+            await update(ref(db), {
+                [`cipa/${item.unitId}/${chave}`]: {mensagem:item.desc || '',unitId:item.unitId,autorUid:item.criadorUid || currentUser.uid,autor:item.criador || item.nome || 'Administrador',criadoEm:Date.now(),status:'novo',origemId:String(id),registroOriginal:{...item,historicoConversoes}},
+                [`ocorrencias/${id}`]: referencia
+            });
+            await registrarAuditoria('conversão', `Registro ${id} convertido para Fala CIPA / ${item.unitId}`);
+        };
+        window.fbConverterCipaParaAcao = async (unitId, chave, local, setor) => {
+            if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) throw new Error('Apenas o administrador pode converter registros.');
+            const snap = await get(ref(db, `cipa/${unitId}/${chave}`)); const fala = snap.val();
+            if (!fala) throw new Error('Comentário não encontrado.');
+            if (window.unidadeDaFabrica(local,listaSetoresCadastrados) !== unitId || !setor.trim()) throw new Error('Selecione uma fábrica da mesma unidade e informe o setor.');
+            const original = fala.registroOriginal || {};
+            const id = fala.origemId || Date.now();
+            const existente = await get(ref(db, `ocorrencias/${id}`));
+            if (existente.exists() && existente.val().status !== 'cipa') throw new Error('A ação já existe. Atualize a página.');
+            const hoje = new Date();
+            const item = {...original,id:original.id || id,ticket:original.ticket || ('CIPA-' + id),unitId,local,setor:setor.trim().toUpperCase(),desc:fala.mensagem,status:'pendente',tipoOcorrencia:'Condicao Insegura',nome:original.nome || fala.autor,criador:original.criador || fala.autor,criadorUid:original.criadorUid || fala.autorUid,
+                dataCriacao:original.dataCriacao || hoje.toISOString().slice(0,10),mes:original.mes || String(hoje.getMonth()+1).padStart(2,'0'),ano:original.ano || String(hoje.getFullYear()),gravidade:original.gravidade || 'Baixa',
+                historicoConversoes:[...(original.historicoConversoes || []),{tipo:'Condicao Insegura',em:Date.now(),por:currentUser.uid}],falaCipaOrigem:chave};
+            await update(ref(db), {[`ocorrencias/${id}`]:item,[`cipa/${unitId}/${chave}`]:null});
+            await registrarAuditoria('conversão', `Fala CIPA ${chave} convertida para ação ${id} / ${unitId}`);
+        };
+        window.fbLerFotoCipa = async (id,campo) => {
+            if (!window.firebasePodeGerenciar || !camposFoto.includes(campo)) throw new Error('Acesso restrito à gestão.');
+            const snap = await get(ref(db,`fotos/${id}/${campo}`)); return photoStorage.read(id,campo,snap.val());
         };
 
         onAuthStateChanged(auth, async user => {
@@ -243,6 +294,8 @@
             window.firebaseUsuarioAtual = user;
             window.firebasePerfilAtual = null;
             window.firebasePodeGerenciar = false;
+            window.comentariosCipa = {};
+            document.getElementById('listaGestorCipa')?.replaceChildren();
             sincronizarInterfaceAdministrativa();
             const botaoAdmin = document.getElementById('botaoAdministracao');
             if (botaoAdmin) { botaoAdmin.hidden = true; botaoAdmin.style.display = 'none'; }
@@ -500,6 +553,26 @@
             fotosEmMigracao.add(chave);
             filaMigracaoFotos = filaMigracaoFotos.then(() => migracaoFotosPausada ? undefined : migrarFotosAntigas(item));
         }
+
+        window.fbPrepararArquivoExcel = async () => {
+            const uid = currentUser?.uid;
+            const validar = () => { if (!uid || currentUser?.uid !== uid || !window.firebasePodeGerenciar) throw new Error('Entre com a conta administradora para exportar.'); };
+            validar();
+            const [snapshot, cipaSnapshot, configSnapshot] = await Promise.all([get(ref(db, 'ocorrencias')),get(ref(db,'cipa')),get(ref(db,'config'))]);
+            validar();
+            const comentarios = Object.entries(cipaSnapshot.val() || {}).flatMap(([unitId, items]) => Object.entries(items || {}).map(([key, fala]) => ({...(fala.registroOriginal || {}),id:fala.origemId || ('cipa_'+key),ticket:fala.registroOriginal?.ticket || key,unitId,desc:fala.mensagem,criador:fala.autor,dataCriacao:fala.registroOriginal?.dataCriacao || new Date(fala.criadoEm).toISOString().slice(0,10),status:'cipa',tipoOcorrencia:'Fala CIPA',falaCipa:fala})));
+            return { registros: [...Object.values(snapshot.val() || {}).filter(item => item.status !== 'cipa'),...comentarios], configuracao:configSnapshot.val() || {}, validar,
+                lerFoto: async (item, campo) => {
+                    validar();
+                    if (String(item.id).startsWith('cipa_')) return null;
+                    const fotoSnapshot = await get(ref(db, `fotos/${item.id}/${campo}`));
+                    validar();
+                    const valor = fotoSnapshot.val() || item[campo] || fotosPendentesMigracao.get(`${item.id}/${campo}`);
+                    if (!valor) return null;
+                    const data = await photoStorage.read(item.id, campo, valor); validar(); return data;
+                }
+            };
+        };
 
         async function carregarFotoNoElemento(img) {
             const id = img.dataset.photoId;
@@ -840,6 +913,7 @@
         function aplicarOcorrenciaRemota(snapshot) {
             const item = snapshot.val();
             if (!item) return;
+            if (item.status === 'cipa') { ocorrenciasPorId.delete(String(item.id)); ocorrencias = Array.from(ocorrenciasPorId.values()).sort((a,b)=>b.id-a.id); agendarRenderFirebase(); return; }
             camposFoto.forEach(campo => {
                 if (typeof item[campo] === "string" && item[campo].startsWith("data:image/")) fotosPendentesMigracao.set(`${item.id}/${campo}`, item[campo]);
             });
@@ -872,7 +946,7 @@
             const normalizar = valor => String(valor || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
             const nome = normalizar(nomeResponsavel);
             if (!nome) return null;
-            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && (!unitId || perfil.unitId === unitId || perfil.allUnits === true) && normalizar(perfil.fullName));
+            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && perfil.role !== 'cipa' && (!unitId || perfil.unitId === unitId || perfil.allUnits === true) && normalizar(perfil.fullName));
             const exatos = aprovados.filter(([, perfil]) => normalizar(perfil.fullName) === nome);
             if (exatos.length) return exatos.length === 1 ? exatos[0][0] : null;
             const primeiroNome = nome.split(' ')[0];
@@ -918,6 +992,11 @@
         function iniciarListenersDadosAprovados() {
             stopCoreDataListeners.forEach(stop => stop());
             stopCoreDataListeners = [];
+            if (currentProfile.role === 'cipa') { document.getElementById('statusCarregamentoOcorrencias').style.display='none'; return; }
+            if (window.firebasePodeGerenciar) stopCoreDataListeners.push(onValue(ref(db,'cipa'), snapshot => {
+                if (!window.firebasePodeGerenciar) return;
+                window.comentariosCipa = snapshot.val() || {}; renderizarGestorCipa();
+            }, error => { const target=document.getElementById('listaGestorCipa'); if(target) target.textContent='Não foi possível carregar os comentários CIPA: '+error.message; }));
             atualizarStatusCarregamentoOcorrencias("carregando");
             const fonteOcorrencias = (window.firebasePodeGerenciar || currentProfile.allUnits === true) ? ocorrenciasRef : query(ocorrenciasRef, orderByChild('unitId'), equalTo(currentProfile.unitId));
             stopCoreDataListeners.push(onChildAdded(fonteOcorrencias, aplicarOcorrenciaRemota, error => {
@@ -1929,6 +2008,18 @@
             </div>
         </div>
 
+        <div id="aba-cipa" class="tab-content" hidden style="display:none;">
+            <div class="form-card">
+                <h2>Fala CIPA</h2>
+                <p id="unidadeFalaCipa"></p>
+                <p>Envie comentários, sugestões ou relatos para a gestão da sua unidade.</p>
+                <label for="mensagemFalaCipa">Seu comentário</label>
+                <textarea id="mensagemFalaCipa" maxlength="5000" rows="7" placeholder="Descreva seu comentário ou sugestão…" style="width:100%;box-sizing:border-box;"></textarea>
+                <button id="btnEnviarCipa" class="btn-primary" onclick="enviarFalaCipa()">Enviar comentário</button>
+                <p id="statusFalaCipa" role="status" aria-live="polite"></p>
+            </div>
+        </div>
+
         <!-- ABA 2: GESTOR -->
         <div id="aba-gestor" class="tab-content">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 8px;">
@@ -1956,8 +2047,15 @@
                 <button class="sub-tab-btn" onclick="mudarSubAba('avisos')">⏰ Avisos de prazo</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('recusados')">❌ Recusados</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('cadastros')">⚙️ Contas e cadastros</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('cipa')">Fala CIPA</button>
             </div>
 
+            <div id="sub-aba-cipa" class="gestor-sub-content">
+                <h2>Fala CIPA — comentários por unidade</h2>
+                <p>Use o filtro de unidade acima. Os comentários ficam separados das ações; a conversão mantém a unidade e as fotos existentes.</p>
+                <div class="form-card"><label for="acaoParaCipa">Converter uma ação ou lançamento em Fala CIPA</label><select id="acaoParaCipa"></select><button class="btn-primary" onclick="converterAcaoParaCipa(document.getElementById('acaoParaCipa').value)">Converter para Fala CIPA</button></div>
+                <div id="listaGestorCipa"></div>
+            </div>
             <div id="sub-aba-recusados" class="gestor-sub-content">
                 <h2 style="color:var(--primary);font-size:1.2rem;">Ações recusadas pela manutenção</h2>
                 <p style="color:var(--text-muted);font-size:0.85rem;">Desfaça a recusa para devolver a ação ao mesmo responsável na aba Usuário.</p>
@@ -2223,6 +2321,16 @@
             <!-- SUB-ABA 6: LIMPEZA E ARQUIVAMENTO -->
             <div id="sub-aba-limpeza" class="gestor-sub-content">
                 <h2 style="color: var(--primary); font-size: 1.2rem; margin-bottom: 12px;">🧹 Limpeza e Arquivamento de Ocorrências</h2>
+                <div class="form-card" style="margin-bottom:15px;border-left:4px solid var(--primary);">
+                    <h3 style="color:var(--primary);margin-top:0;">📗 Arquivo Excel com fotos de antes e depois</h3>
+                    <p>Resumo por ano, unidade, fábrica e setor, com concluídas, pendentes, vencidas e todos os registros. As fotos ficam dentro do arquivo e podem ser vistas sem conexão.</p>
+                    <p>Usa a <strong>Unidade do painel de gestão</strong> selecionada acima. Escolha <strong>Todas as unidades</strong> para arquivar o sistema inteiro.</p>
+                    <label for="anoArquivoExcel">Ano de criação dos registros (deixe vazio para todos os anos)</label>
+                    <input id="anoArquivoExcel" type="number" min="1900" max="9999" placeholder="Todos os anos" style="max-width:220px;">
+                    <button id="btnArquivoExcel" class="btn-primary" onclick="exportarArquivoExcel()">📥 Baixar Excel completo com fotos</button>
+                    <p id="progressoArquivoExcel" role="status" aria-live="polite"></p>
+                    <p style="font-size:.85rem;">Esta opção não apaga dados. Abra o arquivo salvo e confira registros e fotos antes de usar a limpeza. É um arquivo de consulta; não há restauração automática pelo Excel.</p>
+                </div>
                 
                 <div class="form-card" style="margin-bottom: 15px; border-left: 4px solid var(--primary);">
                     <h3 style="color: var(--primary); margin-top:0; font-size:1rem;">📥 Exportar Todos os Dados (Sem Fotos)</h3>
@@ -2236,7 +2344,7 @@
                     <h3 style="color: var(--danger); margin-top:0; font-size:1rem;">Área de Otimização do Banco de Dados</h3>
                     <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4;">
                         Permite limpar o Firebase de ocorrências concluídas antigas para poupar espaço. 
-                        <strong>Antes de apagar, o sistema gera e descarrega um arquivo Excel (CSV)</strong> com todo el histórico escrito completo, dados, prazos e registo de fotos.
+                        <strong>A limpeza atual gera somente um CSV de dados, sem incorporar fotos.</strong> Para preservar as fotos, baixe e confira primeiro o arquivo Excel completo acima.
                     </p>
 
                     <div class="form-group" style="margin-top: 15px;">
@@ -2495,6 +2603,13 @@
 
         function sincronizarInterfaceAdministrativa() {
             const administrador = window.firebasePodeGerenciar === true;
+            const cipa = window.firebasePerfilAtual?.role === 'cipa' && window.firebasePerfilAtual?.status === 'approved';
+            const painelCipa = document.getElementById('aba-cipa');
+            if (painelCipa) { painelCipa.hidden=!cipa; painelCipa.style.display=cipa?'block':'none'; }
+            const usuario = document.getElementById('aba-usuario');
+            if (usuario) { usuario.hidden=cipa; usuario.style.display=cipa?'none':''; }
+            if (!administrador) { window.comentariosCipa={}; document.getElementById('listaGestorCipa')?.replaceChildren(); }
+            if (cipa) { const label=document.getElementById('unidadeFalaCipa'); if(label) label.textContent=window.rotuloUnidade(window.firebasePerfilAtual.unitId); }
             const gestor = document.getElementById('aba-gestor');
             if (gestor) { gestor.hidden = !administrador; gestor.style.display = administrador ? '' : 'none'; }
             const painel = document.getElementById('painelContasAcesso');
@@ -2716,6 +2831,91 @@
             }
         }
 
+        async function enviarFalaCipa() {
+            const texto=document.getElementById('mensagemFalaCipa'), btn=document.getElementById('btnEnviarCipa'), status=document.getElementById('statusFalaCipa');
+            if(btn.disabled) return;
+            const mensagem=texto.value.trim();
+            if(!mensagem || mensagem.length>5000) { status.textContent='Escreva um comentário de até 5.000 caracteres.'; return; }
+            btn.disabled=true; status.textContent='Enviando…';
+            try { const protocolo=await window.fbEnviarCipa(mensagem); texto.value=''; status.textContent=`Comentário enviado para sua unidade. Protocolo: ${protocolo}`; }
+            catch(error) { status.textContent='Não foi possível enviar: '+error.message; }
+            finally { btn.disabled=false; }
+        }
+        async function converterAcaoParaCipa(id) {
+            if(!window.firebasePodeGerenciar || !id) return;
+            if(!confirm('Converter este registro para Fala CIPA? Ele sairá das listas de ações; a unidade, o histórico e as fotos serão preservados.')) return;
+            try { await window.fbConverterParaCipa(id); alert('Registro convertido para Fala CIPA.'); }
+            catch(error) { alert('Conversão não realizada: '+error.message); }
+        }
+        function renderizarGestorCipa() {
+            if(!window.firebasePodeGerenciar) return;
+            const destino=document.getElementById('listaGestorCipa'); if(!destino) return;
+            const filtro=document.getElementById('filtroUnidadeGestao')?.value || 'todos';
+            const seletor=document.getElementById('acaoParaCipa');
+            if(seletor && document.activeElement!==seletor) { const atual=seletor.value; seletor.innerHTML='<option value="">Selecione um registro…</option>'+ocorrencias.filter(item=>filtro==='todos'||item.unitId===filtro).map(item=>`<option value="${escaparHtml(String(item.id))}">${escaparHtml(item.ticket||String(item.id))} — ${escaparHtml(window.rotuloUnidade(item.unitId))} — ${escaparHtml(item.local||'')} / ${escaparHtml(item.setor||'')}</option>`).join(''); seletor.value=atual; }
+            // Não substituir o formulário enquanto a gestão escolhe fábrica/setor.
+            if(destino.contains(document.activeElement)) return;
+            const comentarios=Object.entries(window.comentariosCipa||{}).filter(([unit])=>filtro==='todos'||unit===filtro).flatMap(([unit,items])=>Object.entries(items||{}).map(([key,item])=>({unit,key,item}))).sort((a,b)=>a.unit.localeCompare(b.unit)||Number(b.item.criadoEm)-Number(a.item.criadoEm));
+            destino.innerHTML=comentarios.length?comentarios.map(({unit,key,item})=> {
+                const original=item.registroOriginal || {};
+                const fabricas=[...new Set(listaSetoresCadastrados.filter(s=>s.unitId===unit).map(s=>s.nome))];
+                return `<div class="occurrence-card" data-cipa-unidade="${escaparHtml(unit)}" data-cipa-chave="${escaparHtml(key)}">
+                    <h3>${escaparHtml(window.rotuloUnidade(unit))}</h3><p>${escaparHtml(item.autor||'')} · ${escaparHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}</p>
+                    <p style="white-space:pre-wrap;overflow-wrap:anywhere">${escaparHtml(item.mensagem||'')}</p>
+                    ${item.origemId?`<p>Origem: ${escaparHtml(original.ticket||item.origemId)} — ${escaparHtml(original.local||'')} / ${escaparHtml(original.setor||'')}</p>`:''}
+                    ${original.temFoto?'<button class="btn-tool" data-cipa-foto="foto">Ver foto antes</button>':''}${original.temFotoConclusao?'<button class="btn-tool" data-cipa-foto="fotoConclusao">Ver foto depois</button>':''}
+                    <label>Fábrica da unidade para converter em ação</label><select data-cipa-fabrica><option value="">Selecione a fábrica…</option>${fabricas.map(nome=>`<option value="${escaparHtml(nome)}" ${nome===original.local?'selected':''}>${escaparHtml(nome)}</option>`).join('')}</select>
+                    <label>Setor</label><input data-cipa-setor value="${escaparHtml(original.setor||'')}" maxlength="200">
+                    <button class="btn-primary" data-cipa-converter>Converter em ação para aprovação</button>
+                    <p data-cipa-status role="status"></p></div>`;
+            }).join(''):'<p>Nenhum comentário CIPA nesta unidade.</p>';
+            destino.querySelectorAll('[data-cipa-converter]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-cipa-chave]'), local=card.querySelector('[data-cipa-fabrica]').value, setor=card.querySelector('[data-cipa-setor]').value;
+                if(!local||!setor.trim()) {card.querySelector('[data-cipa-status]').textContent='Escolha a fábrica e informe o setor.'; return;}
+                btn.disabled=true;
+                try {await window.fbConverterCipaParaAcao(card.dataset.cipaUnidade,card.dataset.cipaChave,local,setor); alert('Convertido em ação. O registro aguarda aprovação em Pendentes.');}
+                catch(error) {card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
+            });
+            destino.querySelectorAll('[data-cipa-foto]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-cipa-chave]'), item=window.comentariosCipa?.[card.dataset.cipaUnidade]?.[card.dataset.cipaChave];
+                try {const foto=await window.fbLerFotoCipa(item.origemId,btn.dataset.cipaFoto); if(!foto) throw Error('Foto indisponível.'); abrirZoomImg(foto);}
+                catch(error) {card.querySelector('[data-cipa-status]').textContent=error.message;}
+            });
+        }
+
+        async function exportarArquivoExcel() {
+            if (!window.firebasePodeGerenciar) { alert('Apenas o administrador pode exportar o arquivo completo.'); return; }
+            const btn = document.getElementById('btnArquivoExcel');
+            if (btn.disabled) return;
+            const status = document.getElementById('progressoArquivoExcel');
+            const unidade = document.getElementById('filtroUnidadeGestao')?.value || 'todos';
+            const ano = document.getElementById('anoArquivoExcel').value.trim() || 'todos';
+            if (ano !== 'todos' && !/^\d{4}$/.test(ano)) { alert('Informe um ano com quatro dígitos ou deixe vazio.'); return; }
+            btn.disabled = true; status.textContent = 'Consultando registros e preparando o Excel…';
+            try {
+                const mod = await import('./excel-archive.js?v=20261014');
+                const fonte = await window.fbPrepararArquivoExcel();
+                const registros = mod.prepararArquivo(fonte.registros, {unidade, ano});
+                if (!registros.length) throw new Error('Não há registros para a unidade e o ano selecionados.');
+                const ExcelJS = await mod.carregarExcel(); fonte.validar();
+                const configuracao = {
+                    gestores: Object.values(fonte.configuracao.gestores || {}).filter(g => unidade === 'todos' || g.unitId === unidade),
+                    fabricas: Object.values(fonte.configuracao.setores || {}).filter(s => unidade === 'todos' || s.unitId === unidade)
+                };
+                const resultado = await mod.criarArquivoExcel({ExcelJS, registros, configuracao, validar:fonte.validar, lerFoto:fonte.lerFoto,
+                    contexto:`Exportado em ${new Date().toLocaleString('pt-BR')} · Unidade: ${unidade === 'todos' ? 'Todas' : window.rotuloUnidade(unidade)} · Ano: ${ano === 'todos' ? 'Todos' : ano}`,
+                    progresso:(n,total)=>status.textContent=`Preparando registro ${n} de ${total} e suas fotos…`});
+                status.textContent = 'Gerando arquivo para download…';
+                const buffer = await resultado.workbook.xlsx.writeBuffer(); fonte.validar();
+                const url = URL.createObjectURL(new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+                const link = document.createElement('a'); link.href = url;
+                link.download = `inspecoes_${unidade}_${ano}_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(link); link.click(); link.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);
+                status.textContent = `Download solicitado: ${registros.length} registros e ${resultado.fotos} fotos incorporadas. Confira o arquivo na pasta de downloads antes de limpar o banco.`;
+            } catch (error) { status.textContent = `Arquivo não gerado: ${error.message}`; }
+            finally { btn.disabled = false; }
+        }
+
         function exportarDadosSemFotos() {
             const ocorrencias = ocorrenciasDaVisualizacao();
             if (ocorrencias.length === 0) {
@@ -2902,7 +3102,7 @@
                 <div style="font-weight:700;margin:14px 0 6px;">Contas aprovadas</div>
                 ${aprovadas.length ? aprovadas.map(([uid, p]) => `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin:6px 0;">
-                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button><label style="display:block"><input type="checkbox" ${p.allUnits === true ? 'checked' : ''} onchange="fbDefinirAcessoTodasUnidades('${uid}', this.checked)"> Acesso a todas as unidades</label></span>
+                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button><label style="display:block">Perfil de acesso <select aria-label="Perfil da conta" onchange="fbDefinirPerfilConta('${uid}', this.value)"><option value="user" ${p.role === 'user' ? 'selected' : ''}>Usuário de inspeções</option><option value="cipa" ${p.role === 'cipa' ? 'selected' : ''}>CIPA — somente Fala CIPA</option></select></label><label style="display:block"><input type="checkbox" ${p.allUnits === true ? 'checked' : ''} ${p.role === 'cipa' ? 'disabled' : ''} onchange="fbDefinirAcessoTodasUnidades('${uid}', this.checked)"> Acesso a todas as unidades (inspeções)</label></span>
                         <button class="btn-tool delete" onclick="removerContaAprovada('${uid}')">🗑️ Remover conta</button>
                     </div>`).join('') : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhuma conta aprovada para remoção.</p>'}`;
             destino.querySelectorAll('select').forEach(s => { if (selecoes.has(s.id)) s.value = selecoes.get(s.id); });
@@ -3667,6 +3867,8 @@
 
         function renderizarTelas() {
             sincronizarInterfaceAdministrativa();
+            if (window.firebasePerfilAtual?.role === 'cipa') return;
+            if (window.firebasePodeGerenciar) renderizarGestorCipa();
             const ocorrencias = ocorrenciasDaVisualizacao();
             const gestoresVisiveis = dadosDaUnidadeSelecionada(listaGestores);
             const fabricasVisiveis = dadosDaUnidadeSelecionada(listaSetoresCadastrados);

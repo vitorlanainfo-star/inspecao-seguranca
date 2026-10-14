@@ -863,6 +863,7 @@
             }
             ocorrenciasPorId.set(String(leve.id), leve);
             ocorrencias = Array.from(ocorrenciasPorId.values()).sort((a, b) => b.id - a.id);
+            atualizarStatusCarregamentoOcorrencias(ocorrencias.length ? 'ok' : 'vazio', ocorrencias.length ? `${ocorrencias.length} registro(s) carregado(s) do banco.` : '');
             agendarCacheOcorrencias();
             agendarRenderFirebase();
         }
@@ -931,6 +932,7 @@
                 apagarFotoPersistida(currentUser?.uid, snapshot.key).catch(() => {});
                 ocorrenciasPorId.delete(snapshot.key);
                 ocorrencias = Array.from(ocorrenciasPorId.values()).sort((a, b) => b.id - a.id);
+                atualizarStatusCarregamentoOcorrencias(ocorrencias.length ? 'ok' : 'vazio', ocorrencias.length ? `${ocorrencias.length} registro(s) carregado(s) do banco.` : '');
                 agendarCacheOcorrencias();
                 agendarRenderFirebase();
             }, error => {
@@ -1867,6 +1869,10 @@
 
         <!-- ABA 1: USUÁRIO -->
         <div id="aba-usuario" class="tab-content active">
+            <div id="controleUnidadeVisualizacao" class="form-card" hidden style="display:none;padding:14px">
+                <label for="filtroUnidadeVisualizacao">Unidade para lançamento e visualização</label>
+                <select id="filtroUnidadeVisualizacao" onchange="mudarUnidadeDoPainel()"><option value="todos">Todas as unidades</option></select>
+            </div>
             <div class="form-card">
                 <div style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-bottom: 0;" onclick="toggleFormularioLancar()">
                     <h2 style="margin: 0; font-size: 1.1rem; color: var(--primary);">Registrar Condição Insegura / Incidente</h2>
@@ -1933,15 +1939,10 @@
                 </div>
             </div>
 
-            <div id="painelContasAcesso" class="form-card" style="margin-bottom:15px; display:none; border-left:4px solid var(--primary);">
-                <h2 style="margin-top:0;">Contas e aprovações</h2>
-                <p style="font-size:.8rem; color:var(--text-muted);">Aprove somente pessoas que você reconhece. A suspensão bloqueia o acesso a partir da atualização das regras.</p>
-                <div id="listaCadastrosPendentes"></div>
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:16px 0 6px;">
-                    <h3 style="margin:0; font-size:.95rem;">Acessos e movimentações recentes</h3>
-                    <button class="btn-tool delete" type="button" onclick="limparAuditoriaAcesso()">🗑️ Limpar histórico</button>
-                </div>
-                <div id="listaAuditoriaAcesso" style="max-height:300px; overflow:auto;"></div>
+            <div class="form-card" style="padding:14px;margin-bottom:14px">
+                <label for="filtroUnidadeGestao">Unidade do painel de gestão</label>
+                <select id="filtroUnidadeGestao" onchange="mudarUnidadeDoPainel()"><option value="todos">Todas as unidades</option></select>
+                <p style="margin:6px 0 0;font-size:.8rem;color:var(--text-muted)">Filtra ações, incidentes, gráficos, contas e cadastros pela unidade escolhida. Cadastros ficam na aba própria.</p>
             </div>
 
             <div class="gestor-sub-tabs">
@@ -1954,6 +1955,7 @@
                 <button class="sub-tab-btn" onclick="mudarSubAba('duplicados')">♻️ Duplicados</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('avisos')">⏰ Avisos de prazo</button>
                 <button class="sub-tab-btn" onclick="mudarSubAba('recusados')">❌ Recusados</button>
+                <button class="sub-tab-btn" onclick="mudarSubAba('cadastros')">⚙️ Contas e cadastros</button>
             </div>
 
             <div id="sub-aba-recusados" class="gestor-sub-content">
@@ -1962,8 +1964,18 @@
                 <div id="listaGestorRecusados"></div>
             </div>
 
-            <!-- SUB-ABA 1: PENDENTES -->
-            <div id="sub-aba-pendentes" class="gestor-sub-content active">
+            <div id="sub-aba-cadastros" class="gestor-sub-content">
+            <div id="painelContasAcesso" class="form-card" style="margin-bottom:15px; display:none; border-left:4px solid var(--primary);">
+                <h2 style="margin-top:0;">Contas e aprovações</h2>
+                <p style="font-size:.8rem; color:var(--text-muted);">Aprove somente pessoas que você reconhece. A suspensão bloqueia o acesso a partir da atualização das regras.</p>
+                <div id="listaCadastrosPendentes"></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:16px 0 6px;">
+                    <h3 style="margin:0; font-size:.95rem;">Acessos e movimentações recentes</h3>
+                    <button class="btn-tool delete" type="button" onclick="limparAuditoriaAcesso()">🗑️ Limpar histórico</button>
+                </div>
+                <div id="listaAuditoriaAcesso" style="max-height:300px; overflow:auto;"></div>
+            </div>
+
                 <div class="form-card" style="margin-bottom: 15px; background: #fdfdfd; border-left: 4px solid var(--primary);">
                     <h2>Segurança da conta</h2>
                     <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: -8px; margin-bottom: 12px;">O painel é liberado para contas com papel de administrador aprovado no Firebase.</p>
@@ -2002,6 +2014,10 @@
                     <div id="tagsSetoresCadastrados" style="margin-top: 12px;"></div>
                 </div>
 
+            </div>
+
+            <!-- SUB-ABA 1: PENDENTES -->
+            <div id="sub-aba-pendentes" class="gestor-sub-content active">
                 <div class="filter-toolbar" style="margin-bottom: 12px;">
                     <div>
                         <label style="font-size:0.7rem; font-weight:bold; display:block; margin-bottom:2px;">Filtro por Pessoa:</label>
@@ -2475,14 +2491,53 @@
             if (gestor) { gestor.hidden = !administrador; gestor.style.display = administrador ? '' : 'none'; }
             const painel = document.getElementById('painelContasAcesso');
             if (painel) { painel.hidden = !administrador; painel.style.display = administrador ? '' : 'none'; }
+            const controleVisualizacao = document.getElementById('controleUnidadeVisualizacao');
+            if (controleVisualizacao) { controleVisualizacao.hidden = !administrador; controleVisualizacao.style.display = administrador ? '' : 'none'; }
             if (!administrador) {
+                window.auditoriaAtual = {};
                 if (gestor) gestor.classList.remove('active');
                 document.getElementById('aba-usuario')?.classList.add('active');
                 ['listaCadastrosPendentes', 'listaAuditoriaAcesso', 'listaVinculosUnidades'].forEach(id => {
                     const elemento = document.getElementById(id);
                     if (elemento) elemento.innerHTML = '';
                 });
+                ['filtroUnidadeGestao', 'filtroUnidadeVisualizacao'].forEach(id => {
+                    const campo = document.getElementById(id);
+                    if (campo) campo.value = 'todos';
+                });
             }
+        }
+
+        function unidadeSelecionadaNoPainel() {
+            if (!window.firebasePodeGerenciar) return '';
+            const gestao = document.getElementById('aba-gestor')?.classList.contains('active');
+            const unitId = document.getElementById(gestao ? 'filtroUnidadeGestao' : 'filtroUnidadeVisualizacao')?.value;
+            return window.unidadeValida(unitId) ? unitId : '';
+        }
+
+        function dadosDaUnidadeSelecionada(lista) {
+            const unitId = unidadeSelecionadaNoPainel();
+            return unitId ? lista.filter(item => item.unitId === unitId) : lista;
+        }
+
+        function ocorrenciasDaVisualizacao() {
+            return dadosDaUnidadeSelecionada(ocorrencias);
+        }
+
+        function mudarUnidadeDoPainel() {
+            ['filtroGlobalPessoa', 'filtroGlobalMes', 'filtroGlobalAno', 'filtroGlobalGravidade', 'filtroFabricaIncidentes'].forEach(id => {
+                const campo = document.getElementById(id);
+                if (campo) campo.value = 'todos';
+            });
+            const unitId = unidadeSelecionadaNoPainel();
+            ['novoGestorUnidade', 'novoSetorUnidade'].forEach(id => {
+                const campo = document.getElementById(id);
+                if (campo) campo.value = unitId;
+            });
+            const fabrica = document.getElementById('localUsuario');
+            if (fabrica && unitId && window.unidadeDaFabrica(fabrica.value, listaSetoresCadastrados) !== unitId) fabrica.value = '';
+            renderizarTelas();
+            if (window.renderizarAuditoriaAcesso) window.renderizarAuditoriaAcesso(window.auditoriaAtual || {});
         }
 
         function solicitarAcessoGestor() {
@@ -2526,7 +2581,7 @@
         function mudarSubAba(sub) {
             document.querySelectorAll('.sub-tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.gestor-sub-content').forEach(c => c.classList.remove('active'));
-            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7, recusados: 8 };
+            const indices = { pendentes: 0, execucao: 1, incidentes: 2, modificar: 3, graficos: 4, limpeza: 5, duplicados: 6, avisos: 7, recusados: 8, cadastros: 9 };
             const indice = indices[sub];
             if (indice === undefined) return;
             document.querySelectorAll('.sub-tab-btn')[indice].classList.add('active');
@@ -2549,6 +2604,7 @@
         }
 
         function renderizarDuplicados() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const container = document.getElementById('listaGestorDuplicados');
             if (!container) return;
             const grupos = new Map();
@@ -2585,6 +2641,7 @@
         }
 
         function renderizarAvisosPrazo() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const container = document.getElementById('listaAvisosPrazo');
             const seletor = document.getElementById('limiteAvisoPrazo');
             if (!container || !seletor) return;
@@ -2652,6 +2709,7 @@
         }
 
         function exportarDadosSemFotos() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             if (ocorrencias.length === 0) {
                 alert("Não há registros no sistema para exportar.");
                 return;
@@ -2694,6 +2752,7 @@
         }
 
         function executarLimpezaEBackup() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             let diasLimite = document.getElementById('filtroTempoLimpeza').value;
             let ocorrenciasConcluidas = ocorrencias.filter(x => x.status === 'concluido');
             let hoje = new Date();
@@ -2763,15 +2822,17 @@
         }
 
         function renderizarVinculosUnidades() {
+            const gestoresVisiveis = dadosDaUnidadeSelecionada(listaGestores);
+            const fabricasVisiveis = dadosDaUnidadeSelecionada(listaSetoresCadastrados);
             const destino = document.getElementById('listaVinculosUnidades');
             if (!destino) return;
             // Mantém seleções em andamento durante atualizações remotas.
-            const selecoes = new Map([...destino.querySelectorAll('select')].map(s => [s.id, s.value]));
+            const selecoes = new Map([...destino.querySelectorAll('select')].filter(s => s === document.activeElement).map(s => [s.id, s.value]));
             const linha = (tipo, nome, unitId, indice, detalhe = '') => {
                 const id = 'vinculo-' + tipo + '-' + indice;
                 return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0"><strong>' + escaparHtml(nome) + '</strong><small>' + escaparHtml(detalhe) + '</small><select id="' + id + '" aria-label="Unidade de ' + escaparHtml(nome) + '">' + window.opcoesUnidades(selecoes.get(id) || unitId) + '</select><button class="btn-primary" data-tipo="' + tipo + '" data-nome="' + escaparHtml(nome) + '" data-select="' + id + '">Salvar unidade</button></div>';
             };
-            destino.innerHTML = '<h3>Responsáveis</h3>' + listaGestores.map((g, i) => linha('responsavel', g.nome, g.unitId, i)).join('') + '<h3>Fábricas</h3>' + [...new Set(listaSetoresCadastrados.map(s => s.nome))].map((nome, i) => linha('fabrica', nome, window.unidadeDaFabrica(nome, listaSetoresCadastrados), i, ocorrencias.filter(o => o.local === nome && !o.unitId).length + ' registro(s) sem unidade')).join('');
+            destino.innerHTML = '<h3>Responsáveis</h3>' + gestoresVisiveis.map((g, i) => linha('responsavel', g.nome, g.unitId, i)).join('') + '<h3>Fábricas</h3>' + [...new Set(fabricasVisiveis.map(s => s.nome))].map((nome, i) => linha('fabrica', nome, window.unidadeDaFabrica(nome, listaSetoresCadastrados), i, ocorrencias.filter(o => o.local === nome && !o.unitId).length + ' registro(s) sem unidade')).join('');
             destino.querySelectorAll('button').forEach(b => b.onclick = async () => {
                 b.disabled = true;
                 await window.fbVincularCadastroUnidade(b.dataset.tipo, b.dataset.nome, document.getElementById(b.dataset.select).value);
@@ -2816,11 +2877,13 @@
             const destino = document.getElementById('listaCadastrosPendentes');
             sincronizarInterfaceAdministrativa();
             if (!painel || !destino || !window.firebasePodeGerenciar) return;
-            const selecoes = new Map([...destino.querySelectorAll('select')].map(s => [s.id, s.value]));
+            const selecoes = new Map([...destino.querySelectorAll('select')].filter(s => s === document.activeElement).map(s => [s.id, s.value]));
             painel.style.display = 'block';
             const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : {};
-            const pendentes = Object.entries(perfis).filter(([, p]) => p && p.status === 'pending');
-            const aprovadas = Object.entries(perfis).filter(([, p]) => p && p.status === 'approved' && p.role !== 'admin');
+            const unitId = unidadeSelecionadaNoPainel();
+            const pertenceAoPainel = p => !unitId || p.unitId === unitId;
+            const pendentes = Object.entries(perfis).filter(([, p]) => p && p.status === 'pending' && (pertenceAoPainel(p) || !p.unitId));
+            const aprovadas = Object.entries(perfis).filter(([, p]) => p && p.status === 'approved' && p.role !== 'admin' && pertenceAoPainel(p));
             destino.innerHTML = `
                 <div style="font-weight:700;margin-bottom:6px;">Em validação</div>
                 ${pendentes.length ? pendentes.map(([uid, p]) => `
@@ -2858,6 +2921,7 @@
         };
 
         window.limparAuditoriaAcesso = async function () {
+            if (unidadeSelecionadaNoPainel()) return alert('A limpeza geral de auditoria está disponível somente em Todas as unidades.');
             if (!window.firebasePodeGerenciar) {
                 alert('Apenas o administrador/gestor pode limpar os acessos e movimentações recentes.');
                 return;
@@ -2878,9 +2942,12 @@
         };
 
         window.renderizarAuditoriaAcesso = function (porUsuario) {
+            window.auditoriaAtual = porUsuario;
             const destino = document.getElementById('listaAuditoriaAcesso');
             if (!destino || !window.firebasePodeGerenciar) return;
-            const linhas = Object.entries(porUsuario).flatMap(([uid, eventos]) => Object.values(eventos || {}).map(e => ({ ...e, uid })))
+            const unitId = unidadeSelecionadaNoPainel();
+            const perfis = window.firebaseUsuarios ? window.firebaseUsuarios() : {};
+            const linhas = Object.entries(porUsuario).filter(([uid]) => !unitId || perfis[uid]?.unitId === unitId).flatMap(([uid, eventos]) => Object.values(eventos || {}).map(e => ({ ...e, uid })))
                 .sort((a, b) => Number(b.horarioServidor || 0) - Number(a.horarioServidor || 0)).slice(0, 100);
             destino.innerHTML = linhas.length ? `<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:.75rem;"><thead><tr><th style="text-align:left;padding:6px;">Horário</th><th style="text-align:left;padding:6px;">Conta</th><th style="text-align:left;padding:6px;">Evento</th><th style="text-align:left;padding:6px;">Detalhe</th></tr></thead><tbody>${linhas.map(e => `<tr><td style="padding:6px;border-top:1px solid #e5e7eb;">${e.horarioServidor ? new Date(Number(e.horarioServidor)).toLocaleString('pt-BR') : 'Registrando…'}</td><td style="padding:6px;border-top:1px solid #e5e7eb;">${escaparHtml(e.nome || e.username || e.uid)}</td><td style="padding:6px;border-top:1px solid #e5e7eb;">${escaparHtml(e.tipo || '')}</td><td style="padding:6px;border-top:1px solid #e5e7eb;">${escaparHtml(e.detalhe || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhum evento registrado.</p>';
         };
@@ -3106,7 +3173,7 @@
                     fotoTempBase64 = null;
                     if (statusFoto) statusFoto.textContent = '';
                     if (formLancarAberto) toggleFormularioLancar();
-                    alert('Registro enviado com sucesso! Protocolo gerado: ' + ticketNum);
+                    alert('Registro enviado com sucesso! Protocolo gerado: ' + ticketNum + (tipoOco === 'Incidente' ? '\nO administrador encontra este registro na aba Incidentes.' : '\nEnviado para aprovação no painel de gestão.'));
                 }
                 } finally {
                     if (btnEnviar) { btnEnviar.disabled = false; btnEnviar.textContent = 'Enviar Registro'; }
@@ -3175,6 +3242,7 @@
         }
 
         function renderizarRecusadosGestor() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const container = document.getElementById('listaGestorRecusados');
             if (!container || !window.firebasePodeGerenciar) return;
             const recusados = ocorrencias.filter(item => item.status === 'recusado');
@@ -3413,6 +3481,7 @@
         }
 
         function atualizarGraficoLocalModal() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const tipoVisao = document.getElementById('tipoVisaoGraficoLocal').value;
             const ctx = document.getElementById('canvasGraficoLocalModal').getContext('2d');
 
@@ -3590,10 +3659,17 @@
 
         function renderizarTelas() {
             sincronizarInterfaceAdministrativa();
+            const ocorrencias = ocorrenciasDaVisualizacao();
+            const gestoresVisiveis = dadosDaUnidadeSelecionada(listaGestores);
+            const fabricasVisiveis = dadosDaUnidadeSelecionada(listaSetoresCadastrados);
             const loader = document.getElementById('loadingIndicator');
             if (loader) loader.style.display = 'block';
 
             setTimeout(() => {
+                ['filtroUnidadeGestao', 'filtroUnidadeVisualizacao'].forEach(id => {
+                    const select = document.getElementById(id);
+                    if (select) { const valor = select.value || 'todos'; select.innerHTML = '<option value="todos">Todas as unidades</option>' + window.opcoesUnidades(valor).replace('<option value="">Selecione a unidade...</option>', ''); select.value = valor; }
+                });
                 ['novoGestorUnidade', 'novoSetorUnidade'].forEach(id => {
                     const select = document.getElementById(id);
                     if (select) { const valor = select.value; select.innerHTML = window.opcoesUnidades(valor); }
@@ -3601,7 +3677,7 @@
                 if (window.firebasePodeGerenciar) { renderizarVinculosUnidades(); window.renderizarCadastrosAcesso(); }
                 const tagsDiv = document.getElementById('tagsGestoresCadastrados');
                 if (tagsDiv) {
-                    tagsDiv.innerHTML = listaGestores.map(g => `<span class="chip-gestor">👤 ${g.nome} ${g.fone ? '📞('+g.fone+')' : ''} <button onclick="removerGestor('${g.nome}')">×</button></span>`).join('');
+                    tagsDiv.innerHTML = gestoresVisiveis.map(g => `<span class="chip-gestor">👤 ${g.nome} ${g.fone ? '📞('+g.fone+')' : ''} <button onclick="removerGestor('${g.nome}')">×</button></span>`).join('');
                 }
 
                 const selectRespSetor = document.getElementById('novoSetorResponsavel');
@@ -3614,27 +3690,27 @@
                 const selectLocalUsuario = document.getElementById('localUsuario');
                 if (selectLocalUsuario) {
                     let localUsuarioAtual = selectLocalUsuario.value;
-                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.filter(s => window.unidadeValida(s.unitId)).map(s => s.nome))];
+                    let locaisUnicosCadastrados = [...new Set(fabricasVisiveis.filter(s => window.unidadeValida(s.unitId)).map(s => s.nome))];
                     selectLocalUsuario.innerHTML = '<option value="">Selecione a Fábrica...</option>' + locaisUnicosCadastrados.map(loc => `<option value="${escaparHtml(loc)}">${escaparHtml(rotuloFabrica(loc))}</option>`).join('');
                     selectLocalUsuario.value = localUsuarioAtual;
                 }
 
                 const tagsSetoresDiv = document.getElementById('tagsSetoresCadastrados');
                 if (tagsSetoresDiv) {
-                    tagsSetoresDiv.innerHTML = listaSetoresCadastrados.map(s => `<span class="chip-setor">📍 ${escaparHtml(rotuloFabrica(s.nome, s.unitId))} (${escaparHtml(s.responsavel)}) <button onclick="removerSetor('${s.nome}', '${s.responsavel}')">×</button></span>`).join('');
+                    tagsSetoresDiv.innerHTML = fabricasVisiveis.map(s => `<span class="chip-setor">📍 ${escaparHtml(rotuloFabrica(s.nome, s.unitId))} (${escaparHtml(s.responsavel)}) <button onclick="removerSetor('${s.nome}', '${s.responsavel}')">×</button></span>`).join('');
                 }
 
                 const selectPessoa = document.getElementById('filtroGlobalPessoa');
                 if (selectPessoa) {
                     let pessoaSelecionadaAtual = selectPessoa.value;
-                    selectPessoa.innerHTML = '<option value="todos">👤 Todos os Responsáveis</option>' + listaGestores.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
+                    selectPessoa.innerHTML = '<option value="todos">👤 Todos os Responsáveis</option>' + gestoresVisiveis.map(g => `<option value="${g.nome}">${g.nome}</option>`).join('');
                     selectPessoa.value = pessoaSelecionadaAtual;
                 }
 
                 const selectFabricaInc = document.getElementById('filtroFabricaIncidentes');
                 if (selectFabricaInc) {
                     let fabricaAtual = selectFabricaInc.value;
-                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    let locaisUnicosCadastrados = [...new Set(fabricasVisiveis.map(s => s.nome))];
                     selectFabricaInc.innerHTML = '<option value="todos">🏭 Todas as Fábricas</option>' + locaisUnicosCadastrados.map(loc => `<option value="${escaparHtml(loc)}">${escaparHtml(rotuloFabrica(loc))}</option>`).join('');
                     selectFabricaInc.value = fabricaAtual;
                 }
@@ -3662,7 +3738,7 @@
                 if (containerSetores && abaUsuarioAtiva) {
                     containerSetores.innerHTML = '';
 
-                    let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
+                    let locaisUnicosCadastrados = [...new Set(fabricasVisiveis.map(s => s.nome))];
                     if (locaisUnicosCadastrados.length === 0) {
                         containerSetores.innerHTML = '<p style="text-align:center; color:var(--text-muted); font-size:0.85rem;">Nenhuma fábrica cadastrada. Cadastre na aba de Gestão.</p>';
                     } else {
@@ -3879,7 +3955,7 @@
                                             <div class="fabrica-identidade">
                                                 <span class="fabrica-icone" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V10l6 3V10l6 3V3h4l2 18H3Z"/><path d="M7 17h1m4 0h1m4 0h1"/></svg></span>
                                                 ${dotLocalHtml}
-                                                <strong>${nomeLocal}</strong>
+                                                <strong>${escaparHtml(rotuloFabrica(nomeLocal))}</strong>
                                             </div>
                                             ${contadoresHtml}
                                         </div>
@@ -4006,6 +4082,7 @@
         }
 
         function renderizarIncidentesGestor() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const cIncidentes = document.getElementById('listaGestorIncidentes');
             if (!cIncidentes) return;
             cIncidentes.innerHTML = '';
@@ -4070,6 +4147,7 @@
         }
 
         function renderizarAprovadasGestor() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const cAprovadas = document.getElementById('listaGestorAprovadas');
             if (!cAprovadas) return;
             cAprovadas.innerHTML = '';
@@ -4260,6 +4338,7 @@
         }
 
         function renderizarModificarGestor() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const cModificar = document.getElementById('listaGestorModificar');
             if (!cModificar) return;
             cModificar.innerHTML = '';
@@ -4330,6 +4409,7 @@
         }
 
         function renderizarGraficosReais() {
+            const ocorrencias = ocorrenciasDaVisualizacao();
             const acoes = ocorrencias.filter(x => x.status !== 'recusado' && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
             const concluidas = acoes.filter(x => x.status === 'concluido').length;
             const vencidas = acoes.filter(x => x.status !== 'concluido' && verificarVencimento(x.dataConclusaoPrazo)).length;

@@ -56,3 +56,19 @@ test('factory labels show the unit without changing stored factory names',()=>{
     assert.equal(context.rotuloFabrica('QUEIJO'),'QUEIJO — Unidade 102');
     assert.equal(context.rotuloFabrica('QUEIJO',''),'QUEIJO');
 });
+
+test('admin unit views isolate all statuses and factory lists without mutating the complete data',()=>{
+    const nodes={'aba-gestor':element(),'filtroUnidadeGestao':element('102'),'filtroUnidadeVisualizacao':element('101')};
+    const records=[{id:1,unitId:'101',status:'pendente'},{id:2,unitId:'102',status:'pendente'},{id:3,unitId:'102',tipoOcorrencia:'Incidente'}];
+    const context={window:{firebasePodeGerenciar:true,unidadeValida:u=>['101','102'].includes(u)},document:{getElementById:id=>nodes[id]},ocorrencias:records};
+    vm.runInNewContext(functionSource('unidadeSelecionadaNoPainel','function mudarUnidadeDoPainel'),context);
+    assert.deepEqual(Array.from(context.ocorrenciasDaVisualizacao(),r=>r.id),[2,3]);
+    const factories=[{nome:'QUEIJO',unitId:'101'},{nome:'ABACAXI',unitId:'102'}];
+    assert.deepEqual(Array.from(context.dadosDaUnidadeSelecionada(factories),f=>f.nome),['ABACAXI']);
+    assert.equal(records.length,3);assert.equal(factories.length,2);
+    nodes['filtroUnidadeGestao'].value='todos';assert.equal(context.ocorrenciasDaVisualizacao(),records);
+    nodes['aba-gestor'].classList.remove('active');
+    assert.deepEqual(Array.from(context.ocorrenciasDaVisualizacao(),r=>r.id),[1]);
+    context.window.firebasePodeGerenciar=false;
+    assert.equal(context.ocorrenciasDaVisualizacao(),records,'common users retain the server-scoped collection rather than admin filters');
+});

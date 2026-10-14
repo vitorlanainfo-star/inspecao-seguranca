@@ -291,6 +291,8 @@
                 iniciarListenersDadosAprovados();
                 const badge = document.getElementById("contaAtual");
                 if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : currentProfile.allUnits === true ? "Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
+                const unidadeCabecalho = document.getElementById('unidadeCabecalho');
+                if (unidadeCabecalho) unidadeCabecalho.textContent = window.firebasePodeGerenciar || currentProfile.allUnits === true ? 'Todas as unidades' : window.rotuloUnidade(currentProfile.unitId);
                 const nomeRegistro = document.getElementById("nomeUsuario");
                 if (nomeRegistro) {
                     const administrador = currentProfile.role === "admin";
@@ -1846,7 +1848,7 @@
     <header>
         <img class="empresa-logo" src="assets/logo-porto-alegre.svg" alt="Laticínios Porto Alegre" width="114" height="114">
         <h1>Inspeção de Condições Inseguras</h1>
-        <p style="margin: 4px 0 0 0; font-size: 0.8rem; opacity: 0.9;">Unidade 101</p>
+        <p id="unidadeCabecalho" style="margin: 4px 0 0 0; font-size: 0.8rem; opacity: 0.9;"></p>
         <button class="btn-gestor-hidden" id="botaoAdministracao" hidden style="display:none" onclick="solicitarAcessoGestor()" title="Acesso do Gestor">⚙️</button>
         <div style="font-size:.7rem; margin-top:8px;"><span id="contaAtual"></span> · <button onclick="sairDaConta()" style="border:0; background:transparent; color:white; text-decoration:underline; cursor:pointer;">Sair</button></div>
     </header>
@@ -2357,6 +2359,13 @@
             if (typeof window.alterarSenhaConta === 'function') window.alterarSenhaConta();
         }
 
+        function unidadeParaFoto(inputId = 'fotoUsuario') {
+            const id = String(inputId || '').match(/-(\d+)$/)?.[1];
+            const item = id ? ocorrencias.find(o => String(o.id) === id) : null;
+            const unitId = id ? item?.unitId : window.unidadeDaFabrica(document.getElementById('localUsuario')?.value, listaSetoresCadastrados);
+            return window.unidadeValida(unitId) ? unitId : '';
+        }
+
         async function comprimirFotoInput(event, callback) {
             const file = event.target.files[0];
             if (!file) return;
@@ -2368,6 +2377,8 @@
             let imagemDecodificada = null;
             let urlTemporaria = null;
             try {
+                const unidadeFoto = unidadeParaFoto(event.target.id);
+                if (!unidadeFoto) throw new Error('Selecione uma fábrica vinculada à unidade antes de preparar a foto.');
                 let fonte;
                 if ('createImageBitmap' in window) {
                     try { imagemDecodificada = await createImageBitmap(file); fonte = imagemDecodificada; }
@@ -2408,7 +2419,7 @@
                 ctx.fillStyle = '#ffffff';
                 ctx.font = `bold ${Math.max(12, Math.round(largura / 48))}px Arial`;
                 ctx.textAlign = 'center';
-                ctx.fillText(`UNIDADE 101 | ${dataStr} ${horaStr}`, largura / 2, altura - Math.round(faixaCarimbo * 0.3));
+                ctx.fillText(`UNIDADE ${unidadeFoto} | ${dataStr} ${horaStr}`, largura / 2, altura - Math.round(faixaCarimbo * 0.3));
 
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.55));
                 if (!blob) throw new Error('Não foi possível compactar a foto. Tente selecionar a imagem novamente.');
@@ -2418,6 +2429,7 @@
                     reader.onerror = () => reject(new Error('Não foi possível ler a foto preparada.'));
                     reader.readAsDataURL(blob);
                 });
+                if (event.target.dataset) event.target.dataset.unitId = unidadeFoto;
                 if (callback) callback(base64Result);
                 if (statusFoto) statusFoto.textContent = `Foto pronta para envio (${Math.max(1, Math.round(blob.size / 1024))} KB).`;
             } catch (error) {
@@ -2441,11 +2453,12 @@
             document.getElementById('modalZoomImg').style.display = 'none';
         }
 
-        function gerarTimestampCarimbo() {
+        function gerarTimestampCarimbo(unitId = unidadeParaFoto()) {
             const agora = new Date();
             const dataStr = agora.toLocaleDateString('pt-BR');
             const horaStr = agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            return `UNIDADE 101 | 📅 ${dataStr} 🕒 ${horaStr}`;
+            if (!window.unidadeValida(unitId)) throw new Error('Unidade da foto não definida.');
+            return `UNIDADE ${unitId} | 📅 ${dataStr} 🕒 ${horaStr}`;
         }
 
         function solicitarAcessoGestor() {
@@ -3010,6 +3023,11 @@
                 return;
             }
 
+            const unidadeLancamento = window.unidadeDaFabrica(local, listaSetoresCadastrados);
+            if (fotoTempBase64 && document.getElementById('fotoUsuario').dataset.unitId !== unidadeLancamento) {
+                alert('A fábrica mudou de unidade após preparar a foto. Selecione a foto novamente.');
+                return;
+            }
             const btnEnviar = document.getElementById('btnEnviarRegistro');
             if (btnEnviar) { btnEnviar.disabled = true; btnEnviar.textContent = 'Enviando registro…'; }
             const statusFoto = document.getElementById('statusFotoUsuario');
@@ -3029,7 +3047,7 @@
                     criador: nome,
                     nome, local, setor, desc,
                     foto: fotoTempBase64 || null,
-                    timestampFotoAntes: fotoTempBase64 ? gerarTimestampCarimbo() : null,
+                    timestampFotoAntes: fotoTempBase64 ? gerarTimestampCarimbo(unidadeLancamento) : null,
                     fotoConclusao: null,
                     timestampFotoDepois: null,
                     status: 'pendente',
@@ -4183,7 +4201,7 @@
             }
 
             item.fotoConclusao = fotoParaUsar;
-            item.timestampFotoDepois = gerarTimestampCarimbo();
+            item.timestampFotoDepois = gerarTimestampCarimbo(item.unitId);
             item.dataConclusaoReal = new Date().toISOString().split('T')[0];
             item.status = 'concluido';
             window.tempFotoConcGestor = null;
@@ -4199,9 +4217,9 @@
             }
             const input = document.getElementById(`fotoAntes-${id}`);
             if (input.files.length > 0) {
-                comprimirFotoInput({ target: { files: input.files } }, function(base64) {
+                comprimirFotoInput({ target: { files: input.files, id: input.id } }, function(base64) {
                     item.foto = base64;
-                    item.timestampFotoAntes = gerarTimestampCarimbo();
+                    item.timestampFotoAntes = gerarTimestampCarimbo(item.unitId);
                     window.fbSalvarOcorrencia(item);
                     renderizarAprovadasGestor();
                     alert("Foto atualizada com sucesso!");
@@ -4530,7 +4548,7 @@
             
             if (window.tempFotoSubst) {
                 item.foto = window.tempFotoSubst;
-                item.timestampFotoAntes = gerarTimestampCarimbo();
+                item.timestampFotoAntes = gerarTimestampCarimbo(item.unitId);
                 window.tempFotoSubst = null;
             }
 
@@ -4585,7 +4603,7 @@
             }
 
             item.fotoConclusao = window.tempFotoConc;
-            item.timestampFotoDepois = gerarTimestampCarimbo();
+            item.timestampFotoDepois = gerarTimestampCarimbo(item.unitId);
             item.dataConclusaoReal = new Date().toISOString().split('T')[0];
             item.status = 'concluido';
             window.tempFotoConc = null;

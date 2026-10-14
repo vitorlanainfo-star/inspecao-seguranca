@@ -82,6 +82,7 @@ test('global unit access can be granted and revoked without granting administrat
     assert.equal(rule(rules.ocorrencias.$id['.write'],{profile:global,item:null,next:record}),true);
     assert.equal(rule(rules.ocorrencias.$id['.write'],{profile:global,item:null,next:{...record,createdByUid:'other'}}),false);
     assert.equal(rule(rules.ocorrencias.$id.unitId['.validate'],{profile:global,item:{unitId:'102'},next:{unitId:'103'},path:['ocorrencias','123','unitId']}),false);
+    assert.equal(rule(rules.ocorrencias.$id.unitId['.validate'],{profile:global,item:{unitId:'102'},next:{unitId:'101'},path:['ocorrencias','123','unitId']}),false);
 });
 test('ordinary users cannot grant themselves global access, including during signup', () => {
     const expression=rules.users.$uid.allUnits['.validate'];
@@ -90,6 +91,15 @@ test('ordinary users cannot grant themselves global access, including during sig
     assert.equal(rule(expression,{...target,profile:{role:'user',status:'approved',allUnits:true}}),false);
     assert.equal(rule(expression,{...target,profile:{role:'admin',status:'approved'}}),true);
     assert.equal(rule(expression,{...target,profile:{role:'admin',status:'rejected'}}),false);
+});
+test('photo stamps use the record unit or selected factory, never a fixed unit or another open form', () => {
+    const source=html.slice(html.indexOf('function unidadeParaFoto('),html.indexOf('async function comprimirFotoInput('));
+    const context={window:units.window,ocorrencias:[{id:123,unitId:'103'}],listaSetoresCadastrados:[{nome:'MUTUM',unitId:'102'}],document:{getElementById:()=>({value:'MUTUM'})}};
+    vm.runInNewContext(source,context);
+    assert.equal(context.unidadeParaFoto('fotoUsuario'),'102');
+    assert.equal(context.unidadeParaFoto('resolver-foto-123'),'103');
+    assert.equal(context.unidadeParaFoto('fotoSubstituir-999'),'');
+    assert.ok(!html.includes('ctx.fillText(`UNIDADE 101'));
 });
 test('factory binding uses latest transaction data, preserves photos/dates, ignores unrelated records and can retry failures', async () => {
     const source=module.slice(module.indexOf('window.fbVincularCadastroUnidade ='),module.indexOf('window.fbSalvarGestores ='));

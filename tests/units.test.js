@@ -25,6 +25,7 @@ function rule(expression, {profile = {role:'user',status:'approved',unitId:'101'
 }
 test('all fourteen requested units are present, with distinct Rio Novo and CD Rio Novo', () => {
     assert.equal(Object.keys(units.window.inspecaoUnidades).length,14);
+    assert.equal(units.window.rotuloUnidade('101'),'101 — Ponte Nova');
     assert.equal(units.window.rotuloUnidade('111'),'111 — Rio Novo');
     assert.equal(units.window.rotuloUnidade('112'),'112 — CD Rio Novo');
     assert.equal(units.window.unidadeValida('109'),false);

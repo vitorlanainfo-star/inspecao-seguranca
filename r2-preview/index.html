@@ -7,7 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     
-    <script src="./units.js"></script>
+    <script src="./units.js?v=20261014-ponte-nova"></script>
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -2211,6 +2211,13 @@
                         <div style="position: relative; height: 300px;"><canvas id="graficoResponsaveis"></canvas></div>
                     </div>
                 </div>
+                <div class="chart-card" style="height:auto;margin-top:18px;min-height:350px;">
+                    <button class="btn-download-chart" onclick="baixarGrafico('graficoUnidades', 'comparativo_unidades.png')">📥 Baixar</button>
+                    <h3 style="font-size:1rem;color:var(--primary);margin:0 80px 8px 0;">Comparativo entre unidades</h3>
+                    <p style="font-size:.8rem;color:var(--text-muted);margin:0 0 14px;">Visão geral das condições inseguras: apontamentos, vencidas e concluídas. Unidades sem apontamentos não são exibidas.</p>
+                    <p id="comparativoUnidadesVazio" hidden>Não há apontamentos para comparar.</p>
+                    <div style="position:relative;height:300px;"><canvas id="graficoUnidades" role="img" aria-label="Comparação de apontamentos, vencidas e concluídas por unidade"></canvas></div>
+                </div>
             </div>
 
             <!-- SUB-ABA 6: LIMPEZA E ARQUIVAMENTO -->
@@ -2342,6 +2349,7 @@
         let estadosAcordeonSetor = {};
         let estadosAcordeonRespNoSetor = {};
         let chartStatusInstance = null;
+        let chartUnidadesInstance = null;
         let chartRespInstance = null;
         let chartLocalModalInstance = null;
         let localAtualModalGrafico = '';
@@ -2497,7 +2505,7 @@
                 window.auditoriaAtual = {};
                 if (gestor) gestor.classList.remove('active');
                 document.getElementById('aba-usuario')?.classList.add('active');
-                ['listaCadastrosPendentes', 'listaAuditoriaAcesso', 'listaVinculosUnidades'].forEach(id => {
+                ['listaCadastrosPendentes', 'listaAuditoriaAcesso', 'listaVinculosUnidades', 'listaGestorPendentes', 'listaGestorAprovadas', 'listaGestorIncidentes', 'listaGestorModificar', 'listaGestorRecusados', 'listaGestorDuplicados', 'tagsGestoresCadastrados', 'tagsSetoresCadastrados'].forEach(id => {
                     const elemento = document.getElementById(id);
                     if (elemento) elemento.innerHTML = '';
                 });
@@ -4076,6 +4084,7 @@
 
                 if (document.getElementById("sub-aba-avisos")?.classList.contains("active")) renderizarAvisosPrazo();
                 if (document.getElementById("sub-aba-recusados")?.classList.contains("active")) renderizarRecusadosGestor();
+                if (window.firebasePodeGerenciar && document.getElementById("sub-aba-graficos")?.classList.contains("active")) renderizarGraficosReais();
             if (document.getElementById("sub-aba-duplicados")?.classList.contains("active")) renderizarDuplicados();
             if (loader) loader.style.display = 'none';
             }, 30);
@@ -4408,7 +4417,52 @@
             });
         }
 
+        function resumoComparativoUnidades(lista) {
+            const grupos = new Map();
+            lista.forEach(item => {
+                if (!window.unidadeValida(item.unitId) || item.status === 'recusado' || (item.tipoOcorrencia && item.tipoOcorrencia !== 'Condicao Insegura')) return;
+                if (!grupos.has(item.unitId)) grupos.set(item.unitId, { unitId: item.unitId, rotulo: window.rotuloUnidade(item.unitId), apontamentos: 0, vencidas: 0, concluidas: 0 });
+                const grupo = grupos.get(item.unitId);
+                grupo.apontamentos++;
+                if (item.status === 'concluido') grupo.concluidas++;
+                else if (verificarVencimento(item.dataConclusaoPrazo)) grupo.vencidas++;
+            });
+            return [...grupos.values()].filter(g => g.apontamentos || g.vencidas || g.concluidas).sort((a, b) => Number(a.unitId) - Number(b.unitId));
+        }
+
+        function renderizarComparativoUnidades() {
+            const canvas = document.getElementById('graficoUnidades');
+            if (!canvas) return;
+            const dados = resumoComparativoUnidades(ocorrencias);
+            if (chartUnidadesInstance) { chartUnidadesInstance.destroy(); chartUnidadesInstance = null; }
+            const vazio = document.getElementById('comparativoUnidadesVazio');
+            if (vazio) vazio.hidden = dados.length > 0;
+            canvas.hidden = dados.length === 0;
+            if (!dados.length) return;
+            canvas.parentElement.style.height = `${Math.max(300, dados.length * 68)}px`;
+            chartUnidadesInstance = new Chart(canvas.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: dados.map(g => g.rotulo),
+                    datasets: [
+                        { label: 'Apontamentos', data: dados.map(g => g.apontamentos), backgroundColor: '#2563eb', borderRadius: 4 },
+                        { label: 'Vencidas', data: dados.map(g => g.vencidas), backgroundColor: '#dc2626', borderRadius: 4 },
+                        { label: 'Concluídas', data: dados.map(g => g.concluidas), backgroundColor: '#15803d', borderRadius: 4 }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' },
+                        datalabels: { display: context => context.dataset.data[context.dataIndex] > 0, anchor: 'end', align: 'end', clamp: true, color: '#1f2937', font: { weight: 'bold', size: 10 } }
+                    },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } }, y: { grid: { display: false } } }
+                }
+            });
+        }
+
         function renderizarGraficosReais() {
+            renderizarComparativoUnidades();
             const ocorrencias = ocorrenciasDaVisualizacao();
             const acoes = ocorrencias.filter(x => x.status !== 'recusado' && (!x.tipoOcorrencia || x.tipoOcorrencia === 'Condicao Insegura'));
             const concluidas = acoes.filter(x => x.status === 'concluido').length;

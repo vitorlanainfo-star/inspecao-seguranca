@@ -72,3 +72,28 @@ test('admin unit views isolate all statuses and factory lists without mutating t
     context.window.firebasePodeGerenciar=false;
     assert.equal(context.ocorrenciasDaVisualizacao(),records,'common users retain the server-scoped collection rather than admin filters');
 });
+
+function chartHarness(records) {
+    const canvas={hidden:false,parentElement:{style:{}},getContext:()=>({})};
+    const empty={hidden:true},charts=[];
+    const context={window:{unidadeValida:u=>['101','102','103'].includes(u),rotuloUnidade:u=>u==='101'?'101 — Ponte Nova':u+' — Unidade'},
+        verificarVencimento:date=>Boolean(date)&&date<'2026-10-14',ocorrencias:records,chartUnidadesInstance:null,
+        document:{getElementById:id=>id==='graficoUnidades'?canvas:empty},Chart:class{constructor(_,config){charts.push(config);}destroy(){}}};
+    vm.runInNewContext(functionSource('resumoComparativoUnidades','function renderizarGraficosReais'),context);
+    return {context,canvas,empty,charts};
+}
+test('unit comparison counts reports, overdue and completed separately, omitting empty units and preserving dates',()=>{
+    const records=[{unitId:'101',status:'pendente'},{unitId:'101',status:'aprovado',dataConclusaoPrazo:'2026-10-13'},
+        {unitId:'102',status:'concluido',dataConclusaoPrazo:'2026-10-01'},{unitId:'102',status:'aprovado',dataConclusaoPrazo:'2026-10-20'},
+        {unitId:'103',status:'recusado'},{unitId:'103',status:'pendente',tipoOcorrencia:'Incidente'},{unitId:'999',status:'pendente'}];
+    const h=chartHarness(records);const summary=h.context.resumoComparativoUnidades(records);
+    assert.equal(summary.length,2);assert.equal(summary[0].rotulo,'101 — Ponte Nova');
+    assert.deepEqual(Array.from(summary,g=>[g.unitId,g.apontamentos,g.vencidas,g.concluidas]),[['101',2,1,0],['102',2,0,1]]);
+    h.context.renderizarComparativoUnidades();assert.equal(h.charts.length,1);
+    assert.deepEqual(Array.from(h.charts[0].data.datasets,d=>d.label),['Apontamentos','Vencidas','Concluídas']);
+    assert.equal(h.canvas.hidden,false);assert.equal(h.empty.hidden,true);assert.equal(records.length,7);
+});
+test('empty unit comparison shows a clear empty state instead of fourteen zero-value units',()=>{
+    const h=chartHarness([]);h.context.renderizarComparativoUnidades();
+    assert.equal(h.charts.length,0);assert.equal(h.canvas.hidden,true);assert.equal(h.empty.hidden,false);
+});

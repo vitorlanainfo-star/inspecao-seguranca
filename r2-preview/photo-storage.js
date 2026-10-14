@@ -1,4 +1,4 @@
-// Leave empty until the private Worker has been deployed and tested.
+// Private gateway validated against Firebase and the R2 bucket.
 export const PHOTO_API_URL = 'https://inspecao-fotos.vitor-lana-info.workers.dev';
 
 export function isR2Photo(value) {
@@ -25,19 +25,21 @@ export function createPhotoStorage({ apiUrl = PHOTO_API_URL, getUser, fetchImpl 
     }
     return {
         enabled: !!base,
-        async upload(id, field, dataUrl) {
+        async upload(id, field, dataUrl, unitId = '') {
             if (!base) return dataUrl;
             if (!/^data:image\/jpeg;base64,/.test(dataUrl)) throw new Error('Formato de foto não suportado.');
             const encoded = dataUrl.slice(dataUrl.indexOf(',') + 1);
             const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
-            const response = await request(`/photos/${encodeURIComponent(id)}/${field}`, {
+            const unitQuery = unitId ? `?unit=${encodeURIComponent(unitId)}` : '';
+            const response = await request(`/photos/${encodeURIComponent(id)}/${field}${unitQuery}`, {
                 method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: bytes
             });
             return response.json();
         },
         async read(id, field, value) {
             if (!isR2Photo(value)) return value;
-            const response = await request(`/photos/${encodeURIComponent(id)}/${field}?key=${encodeURIComponent(value.key)}`);
+            const storageQuery = value.storageUnit ? `&storage=${encodeURIComponent(value.storageUnit)}` : '';
+            const response = await request(`/photos/${encodeURIComponent(id)}/${field}?key=${encodeURIComponent(value.key)}${storageQuery}`);
             const buffer = new Uint8Array(await response.arrayBuffer());
             let binary = '';
             for (let i = 0; i < buffer.length; i += 8192) binary += String.fromCharCode(...buffer.subarray(i, i + 8192));
@@ -45,7 +47,8 @@ export function createPhotoStorage({ apiUrl = PHOTO_API_URL, getUser, fetchImpl 
         },
         async remove(id, field, value) {
             if (!isR2Photo(value)) return;
-            await request(`/photos/${encodeURIComponent(id)}/${field}?key=${encodeURIComponent(value.key)}`, { method: 'DELETE' });
+            const storageQuery = value.storageUnit ? `&storage=${encodeURIComponent(value.storageUnit)}` : '';
+            await request(`/photos/${encodeURIComponent(id)}/${field}?key=${encodeURIComponent(value.key)}${storageQuery}`, { method: 'DELETE' });
         }
     };
 }

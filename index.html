@@ -201,14 +201,22 @@
                 await registrarAuditoria('unidade', 'Conta ' + uid + ': ' + unitId);
                 // As ligações por nome serão recalculadas após a mudança de unidade.
                 for (const item of ocorrenciasPorId.values()) {
-                    if (item.responsavelUid === uid && item.unitId !== unitId) {
+                    if (item.responsavelUid === uid && item.unitId !== unitId && userProfiles[uid]?.allUnits !== true) {
                         await runTransaction(ref(db, 'ocorrencias/' + item.id), atual => {
                             if (!atual) return null;
-                            return atual.responsavelUid === uid && atual.unitId !== unitId ? { ...atual, responsavelUid: '' } : atual;
+                            return atual.responsavelUid === uid && atual.unitId !== unitId && userProfiles[uid]?.allUnits !== true ? { ...atual, responsavelUid: '' } : atual;
                         });
                     }
                 }
             } catch (error) { alert('Não foi possível vincular a conta: ' + error.message); }
+        };
+
+        window.fbDefinirAcessoTodasUnidades = async function(uid, allUnits) {
+            if (!window.firebasePodeGerenciar) return alert('Apenas o administrador pode alterar acessos.');
+            try {
+                await update(ref(db, 'users/' + uid), { allUnits: allUnits === true });
+                await registrarAuditoria('unidade', 'Conta ' + uid + ': acesso a todas as unidades ' + (allUnits ? 'concedido' : 'revogado'));
+            } catch (error) { alert('Não foi possível alterar o acesso: ' + error.message); }
         };
 
         onAuthStateChanged(auth, async user => {
@@ -271,10 +279,10 @@
                     ocorrencias = [];
                     localStorage.removeItem("cache_ocorrencias");
                 }
-                if (!window.firebasePodeGerenciar && !window.unidadeValida(currentProfile.unitId)) {
+                if (!window.firebasePodeGerenciar && currentProfile.allUnits !== true && !window.unidadeValida(currentProfile.unitId)) {
                     mostrarAcesso('Seu acesso está aprovado. Aguarde o administrador vincular sua conta a uma unidade.', false);
                     stopOwnProfileListener = onValue(profileRef, snapshot => {
-                        if (snapshot.val()?.status !== 'approved' || window.unidadeValida(snapshot.val()?.unitId)) window.location.reload();
+                        if (snapshot.val()?.status !== 'approved' || snapshot.val()?.allUnits === true || window.unidadeValida(snapshot.val()?.unitId)) window.location.reload();
                     });
                     return;
                 }
@@ -282,7 +290,7 @@
                 document.getElementById("authGate").style.display = "none";
                 iniciarListenersDadosAprovados();
                 const badge = document.getElementById("contaAtual");
-                if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
+                if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : currentProfile.allUnits === true ? "Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
                 const nomeRegistro = document.getElementById("nomeUsuario");
                 if (nomeRegistro) {
                     const administrador = currentProfile.role === "admin";
@@ -303,7 +311,7 @@
                         mostrarAcesso("Seu acesso foi suspenso pelo administrador.", false);
                         signOut(auth);
                     } else {
-                        if (atual.role !== currentProfile.role || atual.unitId !== currentProfile.unitId) {
+                        if (atual.role !== currentProfile.role || atual.unitId !== currentProfile.unitId || atual.allUnits !== currentProfile.allUnits) {
                             stopCoreDataListeners.forEach(stop => stop());
                             cacheFotos.clear();
                             cargasFotos.clear();
@@ -580,8 +588,8 @@
                 const anterior = ocorrenciasPorId.get(String(registro.id));
                 const unitId = window.unidadeDaFabrica(registro.local, listaSetoresCadastrados);
                 if (!window.firebasePodeGerenciar) {
-                    if (!window.unidadeValida(currentProfile.unitId) || unitId !== currentProfile.unitId || (anterior && anterior.unitId !== currentProfile.unitId)) throw new Error('Esta fábrica não pertence à sua unidade.');
-                    registro.unitId = currentProfile.unitId;
+                    if (!window.unidadeValida(unitId) || (currentProfile.allUnits !== true && (unitId !== currentProfile.unitId || (anterior && anterior.unitId !== currentProfile.unitId))) || (anterior && anterior.unitId !== unitId)) throw new Error('Esta fábrica não pertence à sua unidade.');
+                    registro.unitId = unitId;
                 } else if (unitId) registro.unitId = unitId;
                 else if (!anterior && !registro.unitId) throw new Error('Vincule a fábrica a uma unidade antes de lançar o registro.');
                 if (window.firebasePodeGerenciar && registro.unitId && registro.responsavel && userProfiles[registro.responsavelUid]?.unitId !== registro.unitId) {
@@ -857,7 +865,7 @@
             const normalizar = valor => String(valor || '').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g, ' ');
             const nome = normalizar(nomeResponsavel);
             if (!nome) return null;
-            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && (!unitId || perfil.unitId === unitId) && normalizar(perfil.fullName));
+            const aprovados = Object.entries(perfis || {}).filter(([, perfil]) => perfil?.status === 'approved' && (!unitId || perfil.unitId === unitId || perfil.allUnits === true) && normalizar(perfil.fullName));
             const exatos = aprovados.filter(([, perfil]) => normalizar(perfil.fullName) === nome);
             if (exatos.length) return exatos.length === 1 ? exatos[0][0] : null;
             const primeiroNome = nome.split(' ')[0];
@@ -904,7 +912,7 @@
             stopCoreDataListeners.forEach(stop => stop());
             stopCoreDataListeners = [];
             atualizarStatusCarregamentoOcorrencias("carregando");
-            const fonteOcorrencias = window.firebasePodeGerenciar ? ocorrenciasRef : query(ocorrenciasRef, orderByChild('unitId'), equalTo(currentProfile.unitId));
+            const fonteOcorrencias = (window.firebasePodeGerenciar || currentProfile.allUnits === true) ? ocorrenciasRef : query(ocorrenciasRef, orderByChild('unitId'), equalTo(currentProfile.unitId));
             stopCoreDataListeners.push(onChildAdded(fonteOcorrencias, aplicarOcorrenciaRemota, error => {
                 console.error("Falha ao ler ocorrências do Firebase:", error);
                 atualizarStatusCarregamentoOcorrencias("erro", error?.message || "A leitura foi recusada.");
@@ -932,12 +940,12 @@
             });
             stopCoreDataListeners.push(onValue(ref(db, 'config/gestores'), snapshot => {
                 const data = snapshot.val();
-                listaGestores = Object.values(data || {}).filter(g => window.firebasePodeGerenciar || g.unitId === currentProfile.unitId);
+                listaGestores = Object.values(data || {}).filter(g => window.firebasePodeGerenciar || currentProfile.allUnits === true || g.unitId === currentProfile.unitId);
                 agendarRenderFirebase();
             }, error => console.error("Falha ao carregar responsáveis:", error)));
             stopCoreDataListeners.push(onValue(ref(db, 'config/setores'), snapshot => {
                 const data = snapshot.val();
-                listaSetoresCadastrados = Object.values(data || {}).filter(s => window.firebasePodeGerenciar || s.unitId === currentProfile.unitId);
+                listaSetoresCadastrados = Object.values(data || {}).filter(s => window.firebasePodeGerenciar || currentProfile.allUnits === true || s.unitId === currentProfile.unitId);
                 agendarRenderFirebase();
             }, error => console.error("Falha ao carregar fábricas e setores:", error)));
         }
@@ -2782,7 +2790,7 @@
                 <div style="font-weight:700;margin:14px 0 6px;">Contas aprovadas</div>
                 ${aprovadas.length ? aprovadas.map(([uid, p]) => `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin:6px 0;">
-                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button></span>
+                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button><label style="display:block"><input type="checkbox" ${p.allUnits === true ? 'checked' : ''} onchange="fbDefinirAcessoTodasUnidades('${uid}', this.checked)"> Acesso a todas as unidades</label></span>
                         <button class="btn-tool delete" onclick="removerContaAprovada('${uid}')">🗑️ Remover conta</button>
                     </div>`).join('') : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhuma conta aprovada para remoção.</p>'}`;
             destino.querySelectorAll('select').forEach(s => { if (selecoes.has(s.id)) s.value = selecoes.get(s.id); });

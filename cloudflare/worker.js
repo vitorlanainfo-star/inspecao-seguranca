@@ -39,7 +39,7 @@ export function createHandler(fetchImpl = fetch) {
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(account.localId)) throw new HttpError(401, 'Conta inválida.');
         const profile = await firebaseRead(env, `users/${account.localId}`, token);
         if (profile?.status !== 'approved') throw new HttpError(403, 'Sua conta precisa estar aprovada.');
-        return { token, uid: account.localId, admin: profile.role === 'admin', unitId: profile.unitId || '' };
+        return { token, uid: account.localId, admin: profile.role === 'admin', unitId: profile.unitId || '', allUnits: profile.allUnits === true };
     }
     return async function handle(request, env) {
         const origin = request.headers.get('Origin');
@@ -64,7 +64,7 @@ export function createHandler(fetchImpl = fetch) {
                 const storageUnit = url.searchParams.get('storage') || 'shared';
                 if (request.method === 'POST') {
                     if (requestedUnit && !units.has(requestedUnit)) throw new HttpError(400, 'Unidade inválida.');
-                    if (!actor.admin && requestedUnit !== actor.unitId) throw new HttpError(403, 'A foto precisa pertencer à sua unidade.');
+                    if (!actor.admin && !actor.allUnits && requestedUnit !== actor.unitId) throw new HttpError(403, 'A foto precisa pertencer à sua unidade.');
                     if ((dedicated || Object.keys(routes).length) && !requestedUnit) throw new HttpError(400, 'Informe a unidade da foto.');
                     if (dedicated && requestedUnit !== dedicated) throw new HttpError(403, 'Este serviço atende outra unidade.');
                 } else {

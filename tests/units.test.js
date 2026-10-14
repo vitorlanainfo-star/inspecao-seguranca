@@ -70,6 +70,27 @@ test('matching names resolve only within the assigned unit', () => {
     assert.equal(context.window.encontrarContaResponsavelPorNome('Carlos',profiles,'102'),'b');
     assert.equal(context.window.encontrarContaResponsavelPorNome('Carlos',profiles,'103'),null);
 });
+test('global unit access can be granted and revoked without granting administrator privileges', () => {
+    const global={role:'user',status:'approved',unitId:'101',allUnits:true};
+    assert.equal(rule(rules.ocorrencias['.read'],{profile:global}),true);
+    assert.equal(rule(rules.ocorrencias.$id['.read'],{profile:global,item:{unitId:'102'}}),true);
+    assert.equal(rule(rules.fotos.$id['.read'],{profile:global,item:{unitId:'102'}}),true);
+    assert.equal(rule(rules.ocorrencias.$id['.read'],{profile:{...global,allUnits:false},item:{unitId:'102'}}),false);
+    assert.equal(rule(rules.ocorrencias['.read'],{profile:{...global,status:'rejected'}}),false);
+    assert.equal(rule(rules.config.setores['.write'],{profile:global}),false);
+    const record={id:123,ticket:'P1',status:'pendente',createdByUid:'u1',local:'FABRICA',setor:'SETOR',desc:'TESTE',unitId:'102'};
+    assert.equal(rule(rules.ocorrencias.$id['.write'],{profile:global,item:null,next:record}),true);
+    assert.equal(rule(rules.ocorrencias.$id['.write'],{profile:global,item:null,next:{...record,createdByUid:'other'}}),false);
+    assert.equal(rule(rules.ocorrencias.$id.unitId['.validate'],{profile:global,item:{unitId:'102'},next:{unitId:'103'},path:['ocorrencias','123','unitId']}),false);
+});
+test('ordinary users cannot grant themselves global access, including during signup', () => {
+    const expression=rules.users.$uid.allUnits['.validate'];
+    const target={item:{unitId:true},path:['ocorrencias','123','unitId']};
+    assert.equal(rule(expression,target),false);
+    assert.equal(rule(expression,{...target,profile:{role:'user',status:'approved',allUnits:true}}),false);
+    assert.equal(rule(expression,{...target,profile:{role:'admin',status:'approved'}}),true);
+    assert.equal(rule(expression,{...target,profile:{role:'admin',status:'rejected'}}),false);
+});
 test('factory binding uses latest transaction data, preserves photos/dates, ignores unrelated records and can retry failures', async () => {
     const source=module.slice(module.indexOf('window.fbVincularCadastroUnidade ='),module.indexOf('window.fbSalvarGestores ='));
     const record={id:123,local:'QUEIJO',ticket:'P3',unitId:'102',responsavel:'ANA',dataConclusaoPrazo:'2026-11-01',temFoto:true,versoesFotoCache:{foto:'keep'},status:'aprovado'};

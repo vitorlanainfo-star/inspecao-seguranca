@@ -4,6 +4,8 @@ O administrador mantém a visão geral. As contas de usuário precisam de uma un
 
 O catálogo contém: 101 Ponte, 102 Mutum, 103 Contagem, 104 Rio Pomba, 105 Muriae, 106 São Gotardo, 107 Antônio Carlos, 108 Dores de Rio Preto, 110 Valença, 111 Rio Novo, 112 CD Rio Novo, 113 São Gonçalo do Pará, 115 Campo Belo e 117 Miracema.
 
+Contas existentes também podem receber ou perder **Acesso a todas as unidades** no painel. O campo `allUnits` amplia o alcance das unidades sem conceder o papel de administrador: cadastros, aprovação, exclusão e demais tarefas administrativas continuam restritos. Somente administrador aprovado pode conceder essa permissão. A revogação recarrega a sessão, limpa seus caches e restaura o filtro da unidade principal; as regras e o Worker verificam a permissão atual. Para preservar o acesso após revogar, mantenha uma unidade principal válida.
+
 ## Publicação e configuração inicial
 
 1. Exporte um backup completo do Realtime Database pelo console. Guarde-o fora do GitHub.

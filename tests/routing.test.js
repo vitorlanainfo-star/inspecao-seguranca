@@ -6,14 +6,14 @@ const jpeg=new Uint8Array([255,216,1,255,217]);
 const origin='https://app.example';
 const oldKey='photos/123/foto/00000000-0000-4000-8000-000000000000.jpg';
 const unitKey='units/101/'+oldKey;
-function fixture({unit='101',admin=false,dedicated='',routes={},reference={storage:'r2',key:oldKey},remoteStatus=201,remoteDescriptor={storage:'r2',key:unitKey,storageUnit:'101',unitId:'101'}}={}) {
+function fixture({unit='101',admin=false,allUnits=false,dedicated='',routes={},reference={storage:'r2',key:oldKey},remoteStatus=201,remoteDescriptor={storage:'r2',key:unitKey,storageUnit:'101',unitId:'101'}}={}) {
  const calls=[];
  const env={ALLOWED_ORIGIN:origin,FIREBASE_DATABASE_URL:'https://db.example',FIREBASE_API_KEY:'key',UNIT_GATEWAYS:JSON.stringify(routes),PHOTO_UNIT_ID:dedicated,
  PHOTOS:{put:async(k,b,meta)=>calls.push(['put',k,meta]),get:async k=>{calls.push(['get',k]);return {body:jpeg};},delete:async k=>calls.push(['delete',k])}};
  const fetchImpl=async(input,options)=>{
   const url=String(input);
   if(url.includes('identitytoolkit')) return Response.json({users:[{localId:'u1'}]});
-  if(url.includes('/users/u1.json'))return Response.json({status:'approved',role:admin?'admin':'user',unitId:unit});
+  if(url.includes('/users/u1.json'))return Response.json({status:'approved',role:admin?'admin':'user',unitId:unit,allUnits});
   if(url.includes('/fotos/123/foto.json'))return Response.json(reference);
   calls.push(['remote',url,options]);
   if(remoteStatus!==201)return Response.json({error:'destino indisponível'},{status:remoteStatus});
@@ -37,6 +37,11 @@ test('a user cannot select a different unit; dedicated service rejects even admi
 });
 test('dedicated worker publishes its physical destination and unit identity',async()=>{
  const f=fixture({dedicated:'101'});const d=await (await f.send()).json();assert.equal(d.storageUnit,'101');assert.equal(d.unitId,'101');assert.equal(f.calls[0][2].customMetadata.unitId,'101');
+});
+test('global access permits another unit upload and revocation restores unit isolation',async()=>{
+ const granted=fixture({allUnits:true});const response=await granted.send('POST','unit=102');assert.equal(response.status,201);assert.equal((await response.json()).unitId,'102');
+ const revoked=fixture({allUnits:false});assert.equal((await revoked.send('POST','unit=102')).status,403);
+ const dedicated=fixture({allUnits:true,dedicated:'101'});assert.equal((await dedicated.send('POST','unit=102')).status,403);
 });
 test('photos already stored in shared R2 stay there after routing new uploads elsewhere',async()=>{
  const f=fixture({routes:{101:'https://ponte.workers.dev'}});assert.equal((await f.send('GET','key='+encodeURIComponent(oldKey))).status,200);assert.deepEqual(f.calls,[['get',oldKey]]);

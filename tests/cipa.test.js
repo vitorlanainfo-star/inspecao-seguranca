@@ -33,6 +33,18 @@ test('CIPA writes only new comments in its own unit; ordinary users, edits and f
  assert.equal(evalRule(rule,'cipa','101',{...item,registroOriginal:{id:123}}),false);
  assert.equal(evalRule(rule,'cipa','101',{...item,autorUid:'another'}),false);
 });
+test('CIPA sees only its own panel, clears old admin details and comments; ordinary users never see CIPA',()=>{
+ const node=()=>({hidden:false,style:{},innerHTML:'privado',textContent:'',replaceChildren(){this.innerHTML='';},classList:{add(){},remove(){}}});
+ const ids=['aba-cipa','aba-usuario','aba-gestor','painelContasAcesso','controleUnidadeVisualizacao','listaGestorCipa','unidadeFalaCipa','modalDetalhe','modalZoomImg','modalLoginGestor','modalGraficoLocal','conteudoDetalheModal'];
+ const nodes=Object.fromEntries(ids.map(id=>[id,node()]));
+ const c={window:{firebasePodeGerenciar:false,firebasePerfilAtual:{role:'cipa',status:'approved',unitId:'102'},rotuloUnidade:u=>'Unidade '+u},document:{getElementById:id=>nodes[id]}};
+ const start=html.indexOf('function sincronizarInterfaceAdministrativa('),end=html.indexOf('function solicitarAcessoGestor(',start);
+ vm.runInNewContext(html.slice(start,end),c); c.sincronizarInterfaceAdministrativa();
+ assert.equal(nodes['aba-cipa'].style.display,'block');assert.equal(nodes['aba-usuario'].style.display,'none');assert.equal(nodes['aba-gestor'].style.display,'none');
+ assert.equal(nodes.modalDetalhe.style.display,'none');assert.equal(nodes.conteudoDetalheModal.innerHTML,'');assert.equal(nodes.unidadeFalaCipa.textContent,'Unidade 102');
+ c.window.firebasePerfilAtual.role='user';c.sincronizarInterfaceAdministrativa();
+ assert.equal(nodes['aba-cipa'].style.display,'none');assert.equal(nodes['aba-usuario'].hidden,false);
+});
 test('action to CIPA and back preserves ID, unit, photos, original metadata and conversion history atomically',async()=>{
  const action={id:123,ticket:'P123',unitId:'101',local:'UHT',setor:'ENVASE',desc:'Relato',status:'concluido',temFoto:true,temFotoConclusao:true,dataConclusaoReal:'2026-10-14',historicoAlteracoes:['Preservar'],extra:{campo:7}};
  const tree={ocorrencias:{123:structuredClone(action)},cipa:{},fotos:{123:{foto:{storage:'r2',key:'antes'},fotoConclusao:{storage:'r2',key:'depois'}}}};
@@ -49,4 +61,15 @@ test('action to CIPA and back preserves ID, unit, photos, original metadata and 
  assert.equal(tree.ocorrencias[123].historicoAlteracoes[0],'Preservar');assert.equal(tree.ocorrencias[123].historicoConversoes.length,2);
  assert.equal(tree.fotos[123].foto.key,'antes');assert.equal(tree.fotos[123].fotoConclusao.key,'depois');assert.equal(tree.cipa[101].acao_123,undefined);
  c.window.firebasePodeGerenciar=false;await assert.rejects(c.window.fbConverterParaCipa(123),/administrador/);
+});
+test('only an approved administrator can preserve a CIPA tombstone for an existing action',()=>{
+ const old={id:123,unitId:'101',status:'aprovado',local:'UHT',setor:'Produção',desc:'Original',ticket:'A-123'};
+ const next={id:123,unitId:'101',status:'cipa',tipoOcorrencia:'Fala CIPA',temFoto:true};
+ const expression=rules.ocorrencias.$id['.validate'];
+ const run=(role,item)=>vm.runInNewContext(expression,{auth:{uid:'u'},root:new Snap({users:{u:{role,status:'approved'}}}),data:new Snap(old),newData:new Snap(item)});
+ assert.equal(run('admin',next),true);assert.equal(run('user',next),false);assert.equal(run('cipa',next),false);assert.equal(run('admin',{...next,unitId:'102'}),false);
+});
+test('Excel reads permitted configuration children and never the restricted configuration root',()=>{
+ const part=html.slice(html.indexOf('window.fbPrepararArquivoExcel ='),html.indexOf('async function carregarFotoNoElemento'));
+ assert.match(part,/get\(ref\(db,'config\/gestores'\)\)/);assert.match(part,/get\(ref\(db,'config\/setores'\)\)/);assert.doesNotMatch(part,/get\(ref\(db,\s*'config'\)\)/);
 });

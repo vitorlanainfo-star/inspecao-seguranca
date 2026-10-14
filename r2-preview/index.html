@@ -558,10 +558,10 @@
             const uid = currentUser?.uid;
             const validar = () => { if (!uid || currentUser?.uid !== uid || !window.firebasePodeGerenciar) throw new Error('Entre com a conta administradora para exportar.'); };
             validar();
-            const [snapshot, cipaSnapshot, configSnapshot] = await Promise.all([get(ref(db, 'ocorrencias')),get(ref(db,'cipa')),get(ref(db,'config'))]);
+            const [snapshot, cipaSnapshot, gestoresSnapshot, setoresSnapshot] = await Promise.all([get(ref(db, 'ocorrencias')),get(ref(db,'cipa')),get(ref(db,'config/gestores')),get(ref(db,'config/setores'))]);
             validar();
             const comentarios = Object.entries(cipaSnapshot.val() || {}).flatMap(([unitId, items]) => Object.entries(items || {}).map(([key, fala]) => ({...(fala.registroOriginal || {}),id:fala.origemId || ('cipa_'+key),ticket:fala.registroOriginal?.ticket || key,unitId,desc:fala.mensagem,criador:fala.autor,dataCriacao:fala.registroOriginal?.dataCriacao || new Date(fala.criadoEm).toISOString().slice(0,10),status:'cipa',tipoOcorrencia:'Fala CIPA',falaCipa:fala})));
-            return { registros: [...Object.values(snapshot.val() || {}).filter(item => item.status !== 'cipa'),...comentarios], configuracao:configSnapshot.val() || {}, validar,
+            return { registros: [...Object.values(snapshot.val() || {}).filter(item => item.status !== 'cipa'),...comentarios], configuracao:{gestores:gestoresSnapshot.val() || {},setores:setoresSnapshot.val() || {}}, validar,
                 lerFoto: async (item, campo) => {
                     validar();
                     if (String(item.id).startsWith('cipa_')) return null;
@@ -2609,7 +2609,11 @@
             const usuario = document.getElementById('aba-usuario');
             if (usuario) { usuario.hidden=cipa; usuario.style.display=cipa?'none':''; }
             if (!administrador) { window.comentariosCipa={}; document.getElementById('listaGestorCipa')?.replaceChildren(); }
-            if (cipa) { const label=document.getElementById('unidadeFalaCipa'); if(label) label.textContent=window.rotuloUnidade(window.firebasePerfilAtual.unitId); }
+            if (cipa) {
+                const label=document.getElementById('unidadeFalaCipa'); if(label) label.textContent=window.rotuloUnidade(window.firebasePerfilAtual.unitId);
+                ['modalDetalhe','modalGraficoLocal','modalZoomImg','modalLoginGestor'].forEach(id=>{const modal=document.getElementById(id);if(modal)modal.style.display='none';});
+                document.getElementById('conteudoDetalheModal')?.replaceChildren();
+            }
             const gestor = document.getElementById('aba-gestor');
             if (gestor) { gestor.hidden = !administrador; gestor.style.display = administrador ? '' : 'none'; }
             const painel = document.getElementById('painelContasAcesso');

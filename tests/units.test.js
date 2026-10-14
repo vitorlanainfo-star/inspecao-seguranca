@@ -123,7 +123,7 @@ test('factory binding uses latest transaction data, preserves photos/dates, igno
 test('all occurrence listeners and initial loading share the scoped query; preview contains the same implementation', () => {
     const source=module.slice(module.indexOf('function iniciarListenersDadosAprovados()'),module.indexOf('window.alterarSenhaConta'));
     const calls=[];
-    const context={window:{firebasePodeGerenciar:false},currentProfile:{unitId:'101'},currentUser:{uid:'u1'},stopCoreDataListeners:[],ocorrenciasRef:'ocorrencias',atualizarStatusCarregamentoOcorrencias(){},aplicarOcorrenciaRemota(){},db:{},ref:(_,path)=>path,
+    const context={window:{firebasePodeGerenciar:false,unidadeValida:()=>true},currentProfile:{unitId:'101',role:'user'},currentUser:{uid:'u1'},stopCoreDataListeners:[],ocorrenciasRef:'ocorrencias',atualizarStatusCarregamentoOcorrencias(){},aplicarOcorrenciaRemota(){},db:{},ref:(_,path)=>path,
         orderByChild:field=>field,equalTo:value=>value,query:(...args)=>args,
         onChildAdded:q=>{calls.push(q);return ()=>{};},onChildChanged:q=>{calls.push(q);return ()=>{};},onChildRemoved:q=>{calls.push(q);return ()=>{};},onValue:()=>()=>{},get:q=>{calls.push(q);return Promise.resolve({exists:()=>false});},console};
     vm.runInNewContext(source,context);context.iniciarListenersDadosAprovados();

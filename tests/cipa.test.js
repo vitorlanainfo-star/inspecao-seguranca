@@ -80,3 +80,30 @@ test('management navigation activates the CIPA tab and renders its unit controls
  const c={document:{querySelectorAll:selector=>selector==='.sub-tab-btn'?buttons:[],getElementById:id=>{assert.equal(id,'sub-aba-cipa');return content;}},renderizarGestorCipa:()=>rendered++};
  vm.runInNewContext(html.slice(start,end),c);c.mudarSubAba('cipa');assert.equal(content.active,true);assert.equal(buttons[10].active,true);assert.equal(rendered,1);
 });
+test('CIPA assignments allow only the recipient query, responses and status updates; no foreign-unit access or editing the original comment',()=>{
+ const u=rules.cipa.$unit,m=u.$message;
+ const tree={users:{u:{role:'user',status:'approved',unitId:'101',fullName:'Usuário'},v:{role:'user',status:'approved',unitId:'102'}},cipa:{101:{m:{unitId:'101',mensagem:'Original',responsavelUid:'u',status:'encaminhado',respostas:{}}}}};
+ const response={uid:'u',autor:'Usuário',tipo:'devolver',comentario:'Resolvido, conferir',em:1000};
+ const run=(expr,path=[],newValue=null,uid='u',q={orderByChild:'responsavelUid',equalTo:'u'})=>vm.runInNewContext(expr,{auth:{uid},$unit:'101',query:q,root:new Snap(tree),data:new Snap(tree,path),newData:new Snap(newValue),now:1000});
+ assert.equal(run(u['.read']),true);assert.equal(run(u['.read'],[],null,'v'),false);assert.equal(run(u['.read'],[],null,'u',{}),false);
+ assert.equal(run(m['.read'],['cipa','101','m']),true);assert.equal(run(m['.read'],['cipa','101','m'],null,'v'),false);
+ assert.equal(run(m['.write'],['cipa','101','m'],tree.cipa[101].m),false);
+ assert.equal(run(m.status['.write'],['cipa','101','m','status'],'devolvido'),true);assert.equal(run(m.status['.write'],['cipa','101','m','status'],'concluido'),false);
+ assert.equal(run(m.respostas.$resposta['.write'],['cipa','101','m','respostas','new'],response),true);
+ assert.equal(run(m.respostas.$resposta['.validate'],[],response),true);
+ assert.equal(run(m.respostas.$resposta['.validate'],[],{...response,uid:'v'}),false);
+ tree.cipa[101].m.status='concluido';assert.equal(run(m.status['.write'],['cipa','101','m','status'],'devolvido'),false);
+});
+test('administrator forwards, recipient accepts and returns, then administrator concludes without losing original data',async()=>{
+ const fala={mensagem:'Sugestão',unitId:'101',autorUid:'c',autor:'CIPA',criadoEm:1000,status:'novo',registroOriginal:{extra:'Preservado'}};
+ const tree={cipa:{101:{m:fala}}};let seq=0;
+ const context={window:{firebasePodeGerenciar:true,unidadeValida:()=>true},currentUser:{uid:'a'},currentProfile:{role:'admin',status:'approved',fullName:'Admin'},userProfiles:{u:{role:'user',status:'approved',unitId:'101',fullName:'Usuário'}},db:{},ref:(_,p='')=>p,get:async p=>new Snap(tree,p.split('/')),push:p=>({key:'r'+(++seq)}),serverTimestamp:()=>1000,registrarAuditoria:async()=>{},runTransaction:async(p,fn)=>{const old=new Snap(tree,p.split('/')).val(),v=fn(old);if(v===undefined)return {committed:false};tree.cipa[101].m=v;return{committed:true};},update:async(_,updates)=>{for(const [p,v]of Object.entries(updates)){let t=tree;let parts=p.split('/');for(const k of parts.slice(0,-1))t=t[k]??={};t[parts.at(-1)]=v;}},Date};
+ const start=html.indexOf('window.fbEncaminharCipa ='),end=html.indexOf('window.fbLerFotoCipa =',start);vm.runInNewContext(html.slice(start,end),context);
+ await context.window.fbEncaminharCipa('101','m','u');assert.equal(tree.cipa[101].m.status,'encaminhado');
+ context.currentUser.uid='u';context.currentProfile={role:'user',status:'approved',fullName:'Usuário'};context.window.firebasePodeGerenciar=false;
+ await context.window.fbResponderCipa('101','m','aceitar','');assert.equal(tree.cipa[101].m.status,'em_atendimento');
+ await context.window.fbResponderCipa('101','m','devolver','Correção feita');assert.equal(tree.cipa[101].m.status,'devolvido');assert.equal(Object.keys(tree.cipa[101].m.respostas).length,2);
+ await assert.rejects(context.window.fbConcluirCipa('101','m','Feito'),/administrador/);
+ context.currentUser.uid='a';context.currentProfile={role:'admin',fullName:'Admin'};context.window.firebasePodeGerenciar=true;
+ await context.window.fbConcluirCipa('101','m','Conferido e concluído');assert.equal(tree.cipa[101].m.status,'concluido');assert.equal(tree.cipa[101].m.conclusao.descricao,'Conferido e concluído');assert.equal(tree.cipa[101].m.registroOriginal.extra,'Preservado');assert.equal(Object.keys(tree.cipa[101].m.respostas).length,2);
+});

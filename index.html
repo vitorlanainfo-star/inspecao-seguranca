@@ -249,11 +249,13 @@
             });
             await registrarAuditoria('conversão', `Registro ${id} convertido para Fala CIPA / ${item.unitId}`);
         };
-        window.fbConverterCipaParaAcao = async (unitId, chave, local, setor) => {
+        window.fbConverterCipaParaAcao = async (unitId,chave,local,setor,responsavelUid = "") => {
             if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) throw new Error('Apenas o administrador pode converter registros.');
             const snap = await get(ref(db, `cipa/${unitId}/${chave}`)); const fala = snap.val();
             if (!fala) throw new Error('Comentário não encontrado.');
             if (window.unidadeDaFabrica(local,listaSetoresCadastrados) !== unitId || !setor.trim()) throw new Error('Selecione uma fábrica da mesma unidade e informe o setor.');
+            const conta = responsavelUid ? userProfiles[responsavelUid] : null;
+            if (responsavelUid && (!conta || conta.status !== 'approved' || conta.role === 'cipa' || (conta.unitId !== unitId && conta.allUnits !== true && conta.role !== 'admin'))) throw new Error('Escolha um usuário aprovado com acesso à mesma unidade.');
             const original = fala.registroOriginal || {};
             const id = fala.origemId || Date.now();
             const existente = await get(ref(db, `ocorrencias/${id}`));
@@ -262,8 +264,38 @@
             const item = {...original,id:original.id || id,ticket:original.ticket || ('CIPA-' + id),unitId,local,setor:setor.trim().toUpperCase(),desc:fala.mensagem,status:'pendente',tipoOcorrencia:'Condicao Insegura',nome:original.nome || fala.autor,criador:original.criador || fala.autor,criadorUid:original.criadorUid || fala.autorUid,
                 dataCriacao:original.dataCriacao || hoje.toISOString().slice(0,10),mes:original.mes || String(hoje.getMonth()+1).padStart(2,'0'),ano:original.ano || String(hoje.getFullYear()),gravidade:original.gravidade || 'Baixa',
                 historicoConversoes:[...(original.historicoConversoes || []),{tipo:'Condicao Insegura',em:Date.now(),por:currentUser.uid}],falaCipaOrigem:chave};
+            if (conta) { item.responsavelUid=responsavelUid; item.responsavel=conta.fullName; }
+            if (fala.conclusao) item.falaCipaConclusao=fala.conclusao;
             await update(ref(db), {[`ocorrencias/${id}`]:item,[`cipa/${unitId}/${chave}`]:null});
             await registrarAuditoria('conversão', `Fala CIPA ${chave} convertida para ação ${id} / ${unitId}`);
+        };
+        window.fbEncaminharCipa = async (unitId,chave,uid) => {
+            if (!window.firebasePodeGerenciar) throw Error('Acesso restrito à gestão.');
+            const p=userProfiles[uid];
+            if (!p || p.role!=='user' || p.status!=='approved' || (p.unitId!==unitId && p.allUnits!==true)) throw Error('Selecione um usuário de inspeções aprovado com acesso à unidade.');
+            const r=await runTransaction(ref(db,`cipa/${unitId}/${chave}`),fala=>!fala || fala.status==='concluido'?undefined:{...fala,responsavelUid:uid,responsavel:p.fullName,status:'encaminhado',historicoEncaminhamentos:[...(fala.historicoEncaminhamentos || []),{uid,por:currentUser.uid,em:Date.now()}]});
+            if(!r.committed) throw Error('Comentário concluído ou convertido.');
+            await registrarAuditoria('encaminhamento',`Fala CIPA ${chave} para ${uid} / ${unitId}`);
+        };
+        window.fbResponderCipa = async (unitId,chave,tipo,texto) => {
+            if (!currentUser || currentProfile.role!=='user' || currentProfile.status!=='approved' || !['aceitar','recusar','devolver'].includes(tipo)) throw Error('Acesso não autorizado.');
+            const comentario=String(texto || '').trim();
+            if (comentario.length>5000 || (tipo!=='aceitar' && !comentario)) throw Error('Escreva um comentário em até 5000 caracteres para recusar ou devolver.');
+            const snap=await get(ref(db,`cipa/${unitId}/${chave}`));const fala=snap.val();
+            if (!fala || fala.responsavelUid!==currentUser.uid || fala.status==='concluido') throw Error('Este encaminhamento não está disponível para sua conta.');
+            const resposta=push(ref(db,`cipa/${unitId}/${chave}/respostas`));
+            await update(ref(db),{[`cipa/${unitId}/${chave}/respostas/${resposta.key}`]:{tipo,comentario:comentario || 'Encaminhamento aceito.',uid:currentUser.uid,autor:currentProfile.fullName,em:serverTimestamp()},[`cipa/${unitId}/${chave}/status`]:tipo==='aceitar'?'em_atendimento':'devolvido'});
+        };
+        window.fbConcluirCipa = async (unitId,chave,texto) => {
+            if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) throw new Error('Apenas o administrador pode concluir comentários.');
+            const descricao=String(texto || '').trim();
+            if (!descricao || descricao.length>5000) throw new Error('Descreva a conclusão em até 5000 caracteres.');
+            const resultado=await runTransaction(ref(db,`cipa/${unitId}/${chave}`),fala=>{
+                if (!fala || fala.status==='concluido') return;
+                return {...fala,status:'concluido',conclusao:{descricao,em:Date.now(),uid:currentUser.uid,autor:currentProfile.fullName || currentProfile.username || 'Administrador'}};
+            });
+            if (!resultado.committed) throw new Error('Comentário já concluído ou convertido. Atualize a página.');
+            await registrarAuditoria('conclusão',`Fala CIPA ${chave} concluída / ${unitId}`);
         };
         window.fbLerFotoCipa = async (id,campo) => {
             if (!window.firebasePodeGerenciar || !camposFoto.includes(campo)) throw new Error('Acesso restrito à gestão.');
@@ -294,7 +326,7 @@
             window.firebaseUsuarioAtual = user;
             window.firebasePerfilAtual = null;
             window.firebasePodeGerenciar = false;
-            window.comentariosCipa = {};
+            window.comentariosCipa = {}; window.encaminhamentosCipa = {}; document.getElementById("cipaRecebidos")?.replaceChildren();
             document.getElementById('listaGestorCipa')?.replaceChildren();
             sincronizarInterfaceAdministrativa();
             const botaoAdmin = document.getElementById('botaoAdministracao');
@@ -560,7 +592,7 @@
             validar();
             const [snapshot, cipaSnapshot, gestoresSnapshot, setoresSnapshot] = await Promise.all([get(ref(db, 'ocorrencias')),get(ref(db,'cipa')),get(ref(db,'config/gestores')),get(ref(db,'config/setores'))]);
             validar();
-            const comentarios = Object.entries(cipaSnapshot.val() || {}).flatMap(([unitId, items]) => Object.entries(items || {}).map(([key, fala]) => ({...(fala.registroOriginal || {}),id:fala.origemId || ('cipa_'+key),ticket:fala.registroOriginal?.ticket || key,unitId,desc:fala.mensagem,criador:fala.autor,dataCriacao:fala.registroOriginal?.dataCriacao || new Date(fala.criadoEm).toISOString().slice(0,10),status:'cipa',tipoOcorrencia:'Fala CIPA',falaCipa:fala})));
+            const comentarios = Object.entries(cipaSnapshot.val() || {}).flatMap(([unitId, items]) => Object.entries(items || {}).map(([key, fala]) => ({...(fala.registroOriginal || {}),id:fala.origemId || ('cipa_'+key),ticket:fala.registroOriginal?.ticket || key,unitId,desc:fala.mensagem,criador:fala.autor,dataCriacao:fala.registroOriginal?.dataCriacao || new Date(fala.criadoEm).toISOString().slice(0,10),status:fala.status==='concluido'?'concluido':'cipa',dataConclusaoReal:fala.conclusao?.em?new Date(fala.conclusao.em).toISOString().slice(0,10):'',tipoOcorrencia:'Fala CIPA',falaCipa:fala})));
             return { registros: [...Object.values(snapshot.val() || {}).filter(item => item.status !== 'cipa'),...comentarios], configuracao:{gestores:gestoresSnapshot.val() || {},setores:setoresSnapshot.val() || {}}, validar,
                 lerFoto: async (item, campo) => {
                     validar();
@@ -992,11 +1024,19 @@
         function iniciarListenersDadosAprovados() {
             stopCoreDataListeners.forEach(stop => stop());
             stopCoreDataListeners = [];
-            if (currentProfile.role === 'cipa') { document.getElementById('statusCarregamentoOcorrencias').style.display='none'; return; }
+            if (currentProfile.role === 'cipa') { window.encaminhamentosCipa={};renderizarCipaRecebidos();document.getElementById('statusCarregamentoOcorrencias').style.display='none'; return; }
             if (window.firebasePodeGerenciar) stopCoreDataListeners.push(onValue(ref(db,'cipa'), snapshot => {
                 if (!window.firebasePodeGerenciar) return;
                 window.comentariosCipa = snapshot.val() || {}; renderizarGestorCipa();
             }, error => { const target=document.getElementById('listaGestorCipa'); if(target) target.textContent='Não foi possível carregar os comentários CIPA: '+error.message; }));
+            if (!window.firebasePodeGerenciar) {
+                window.encaminhamentosCipa={};renderizarCipaRecebidos();
+                const unidades=currentProfile.allUnits===true?Object.keys(window.inspecaoUnidades):[currentProfile.unitId];
+                unidades.filter(window.unidadeValida).forEach(unit=>stopCoreDataListeners.push(onValue(query(ref(db,'cipa/'+unit),orderByChild('responsavelUid'),equalTo(currentUser.uid)),snap=>{
+                    if (!currentUser || currentProfile.role!=='user') return;
+                    window.encaminhamentosCipa[unit]=snap.val() || {};renderizarCipaRecebidos();
+                },error=>{const el=document.getElementById('cipaRecebidos');if(el)el.textContent='Não foi possível carregar encaminhamentos: '+error.message;})));
+            }
             atualizarStatusCarregamentoOcorrencias("carregando");
             const fonteOcorrencias = (window.firebasePodeGerenciar || currentProfile.allUnits === true) ? ocorrenciasRef : query(ocorrenciasRef, orderByChild('unitId'), equalTo(currentProfile.unitId));
             stopCoreDataListeners.push(onChildAdded(fonteOcorrencias, aplicarOcorrenciaRemota, error => {
@@ -1947,7 +1987,7 @@
         <div id="statusCarregamentoOcorrencias" role="status" aria-live="polite" style="display:none; padding:12px 16px; border-radius:10px; margin-bottom:15px; font-size:.9rem; font-weight:600;"></div>
 
         <!-- ABA 1: USUÁRIO -->
-        <div id="aba-usuario" class="tab-content active">
+        <div id="aba-usuario" class="tab-content active"><section id="cipaRecebidos" hidden class="form-card"></section>
             <div id="controleUnidadeVisualizacao" class="form-card" hidden style="display:none;padding:14px">
                 <label for="filtroUnidadeVisualizacao">Unidade para lançamento e visualização</label>
                 <select id="filtroUnidadeVisualizacao" onchange="mudarUnidadeDoPainel()"><option value="todos">Todas as unidades</option></select>
@@ -2864,13 +2904,21 @@
             destino.innerHTML=comentarios.length?comentarios.map(({unit,key,item})=> {
                 const original=item.registroOriginal || {};
                 const fabricas=[...new Set(listaSetoresCadastrados.filter(s=>s.unitId===unit).map(s=>s.nome))];
+                const usuarios=Object.entries(window.firebaseUsuarios?.() || {}).filter(([uid,p])=>p.status==='approved' && p.role==='user' && (p.unitId===unit || p.allUnits===true));
+                const conclusao=item.conclusao; const nomesStatus={novo:'Pendente',encaminhado:'Encaminhado',em_atendimento:'Aceito — em atendimento',devolvido:'Devolvido à gestão',concluido:'Concluído'};
                 return `<div class="occurrence-card" data-cipa-unidade="${escaparHtml(unit)}" data-cipa-chave="${escaparHtml(key)}">
                     <h3>${escaparHtml(window.rotuloUnidade(unit))}</h3><p>${escaparHtml(item.autor||'')} · ${escaparHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}</p>
+                    <p><strong>Status: ${escaparHtml(nomesStatus[item.status] || item.status)}</strong></p>
                     <p style="white-space:pre-wrap;overflow-wrap:anywhere">${escaparHtml(item.mensagem||'')}</p>
+                    ${conclusao?`<div class="form-card"><strong>Conclusão — ${escaparHtml(conclusao.autor||'')} · ${escaparHtml(new Date(conclusao.em).toLocaleString('pt-BR'))}</strong><p style="white-space:pre-wrap">${escaparHtml(conclusao.descricao||'')}</p></div>`: '<label>Descrição da conclusão</label><textarea data-cipa-conclusao maxlength="5000" placeholder="Descreva a solução ou o encaminhamento realizado"></textarea><button class="btn-primary" data-cipa-concluir>Concluir comentário</button>'}
                     ${item.origemId?`<p>Origem: ${escaparHtml(original.ticket||item.origemId)} — ${escaparHtml(original.local||'')} / ${escaparHtml(original.setor||'')}</p>`:''}
                     ${original.temFoto?'<button class="btn-tool" data-cipa-foto="foto">Ver foto antes</button>':''}${original.temFotoConclusao?'<button class="btn-tool" data-cipa-foto="fotoConclusao">Ver foto depois</button>':''}
                     <label>Fábrica da unidade para converter em ação</label><select data-cipa-fabrica><option value="">Selecione a fábrica…</option>${fabricas.map(nome=>`<option value="${escaparHtml(nome)}" ${nome===original.local?'selected':''}>${escaparHtml(nome)}</option>`).join('')}</select>
                     <label>Setor</label><input data-cipa-setor value="${escaparHtml(original.setor||'')}" maxlength="200">
+                    <p>Responsável: ${escaparHtml(item.responsavel || 'Sem encaminhamento')}</p>
+                    <div>${Object.values(item.respostas || {}).sort((a,b)=>a.em-b.em).map(r=>`<p style="white-space:pre-wrap"><strong>${escaparHtml(r.autor)} · ${escaparHtml(r.tipo)} · ${escaparHtml(new Date(r.em).toLocaleString('pt-BR'))}</strong><br>${escaparHtml(r.comentario)}</p>`).join('')}</div>
+                    <label>Encaminhar para usuário (opcional)</label><select data-cipa-responsavel><option value="">Definir responsável na aprovação…</option>${usuarios.map(([uid,p])=>`<option value="${escaparHtml(uid)}" ${uid===original.responsavelUid?'selected':''}>${escaparHtml(p.fullName)} · @${escaparHtml(p.username)}</option>`).join('')}</select>
+                    ${item.status!=='concluido'?'<button class="btn-primary" data-cipa-encaminhar>Encaminhar comentário ao usuário sem converter</button>':''}
                     <button class="btn-primary" data-cipa-converter>Converter em ação para aprovação</button>
                     <p data-cipa-status role="status"></p></div>`;
             }).join(''):'<p>Nenhum comentário CIPA nesta unidade.</p>';
@@ -2878,7 +2926,19 @@
                 const card=btn.closest('[data-cipa-chave]'), local=card.querySelector('[data-cipa-fabrica]').value, setor=card.querySelector('[data-cipa-setor]').value;
                 if(!local||!setor.trim()) {card.querySelector('[data-cipa-status]').textContent='Escolha a fábrica e informe o setor.'; return;}
                 btn.disabled=true;
-                try {await window.fbConverterCipaParaAcao(card.dataset.cipaUnidade,card.dataset.cipaChave,local,setor); alert('Convertido em ação. O registro aguarda aprovação em Pendentes.');}
+                try {await window.fbConverterCipaParaAcao(card.dataset.cipaUnidade,card.dataset.cipaChave,local,setor,card.querySelector("[data-cipa-responsavel]").value); alert('Convertido em ação. O registro aguarda aprovação em Pendentes.');}
+                catch(error) {card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
+            });
+            destino.querySelectorAll('[data-cipa-encaminhar]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-cipa-chave]');btn.disabled=true;
+                try {await window.fbEncaminharCipa(card.dataset.cipaUnidade,card.dataset.cipaChave,card.querySelector('[data-cipa-responsavel]').value);document.activeElement?.blur();renderizarGestorCipa();alert('Comentário encaminhado. O usuário pode aceitar, recusar e devolver com comentário.');}
+                catch(error){card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
+            });
+            destino.querySelectorAll('[data-cipa-concluir]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-cipa-chave]'), texto=card.querySelector('[data-cipa-conclusao]').value;
+                if(!texto.trim()) {card.querySelector('[data-cipa-status]').textContent='Descreva a conclusão.';return;}
+                btn.disabled=true;
+                try {await window.fbConcluirCipa(card.dataset.cipaUnidade,card.dataset.cipaChave,texto);document.activeElement?.blur();renderizarGestorCipa();alert('Comentário concluído.');}
                 catch(error) {card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
             });
             destino.querySelectorAll('[data-cipa-foto]').forEach(btn=>btn.onclick=async()=>{
@@ -2888,6 +2948,19 @@
             });
         }
 
+        function renderizarCipaRecebidos() {
+            const el=document.getElementById('cipaRecebidos');if(!el)return;
+            if(window.firebasePerfilAtual?.role!=='user'){el.hidden=true;el.replaceChildren();return;}
+            if(el.contains(document.activeElement))return;
+            const itens=Object.entries(window.encaminhamentosCipa || {}).flatMap(([unit,items])=>Object.entries(items).map(([key,item])=>({unit,key,item}))).filter(({item})=>item.responsavelUid===window.firebaseUsuarioAtual?.uid);
+            el.hidden=!itens.length;
+            el.innerHTML=itens.length?'<h2>Comentários encaminhados pela gestão</h2>'+itens.map(({unit,key,item})=>`<div class="occurrence-card" data-recebido-unit="${escaparHtml(unit)}" data-recebido-key="${escaparHtml(key)}"><h3>${escaparHtml(window.rotuloUnidade(unit))} · ${escaparHtml(item.status)}</h3><p style="white-space:pre-wrap">${escaparHtml(item.mensagem)}</p>${Object.values(item.respostas || {}).sort((a,b)=>a.em-b.em).map(r=>`<p><strong>${escaparHtml(r.autor)} · ${escaparHtml(r.tipo)}</strong>: ${escaparHtml(r.comentario)}</p>`).join('')}${item.status==='concluido'?`<p>Concluído: ${escaparHtml(item.conclusao?.descricao || '')}</p>`:'<label>Comentário para a gestão</label><textarea data-recebido-comentario maxlength="5000"></textarea><button class="btn-primary" data-recebido-tipo="aceitar">Aceitar</button><button class="btn-tool" data-recebido-tipo="recusar">Recusar e devolver</button><button class="btn-tool" data-recebido-tipo="devolver">Enviar comentário e devolver à gestão</button>'}<p data-recebido-status role="status"></p></div>`).join(''):'';
+            el.querySelectorAll('[data-recebido-tipo]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-recebido-key]');const botoes=[...card.querySelectorAll('button')];botoes.forEach(b=>b.disabled=true);
+                try{await window.fbResponderCipa(card.dataset.recebidoUnit,card.dataset.recebidoKey,btn.dataset.recebidoTipo,card.querySelector('[data-recebido-comentario]').value);document.activeElement?.blur();renderizarCipaRecebidos();alert('Resposta enviada à aba Fala CIPA da gestão.');}
+                catch(error){card.querySelector('[data-recebido-status]').textContent=error.message;botoes.forEach(b=>b.disabled=false);}
+            });
+        }
         async function exportarArquivoExcel() {
             if (!window.firebasePodeGerenciar) { alert('Apenas o administrador pode exportar o arquivo completo.'); return; }
             const btn = document.getElementById('btnArquivoExcel');

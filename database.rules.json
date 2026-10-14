@@ -109,7 +109,7 @@
         ".validate": "($unit == '101' || $unit == '102' || $unit == '103' || $unit == '104' || $unit == '105' || $unit == '106' || $unit == '107' || $unit == '108' || $unit == '110' || $unit == '111' || $unit == '112' || $unit == '113' || $unit == '115' || $unit == '117')",
         "$message": {
           ".write": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin') || (auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'cipa' && root.child('users').child(auth.uid).child('unitId').val() == $unit && !data.exists() && newData.exists() && newData.child('autorUid').val() == auth.uid && newData.child('unitId').val() == $unit && newData.child('status').val() == 'novo' && !newData.child('registroOriginal').exists() && !newData.child('origemId').exists())",
-          ".validate": "newData.hasChildren(['mensagem','unitId','autorUid','autor','criadoEm','status']) && newData.child('unitId').val() == $unit && newData.child('mensagem').isString() && newData.child('mensagem').val().length > 0 && newData.child('mensagem').val().length <= 5000 && newData.child('criadoEm').isNumber() && newData.child('status').val() == 'novo'",
+          ".validate": "newData.hasChildren(['mensagem','unitId','autorUid','autor','criadoEm','status']) && newData.child('unitId').val() == $unit && newData.child('mensagem').isString() && newData.child('mensagem').val().length > 0 && newData.child('mensagem').val().length <= 5000 && newData.child('criadoEm').isNumber() && ((newData.child('status').val() == 'novo' || newData.child('status').val() == 'encaminhado' || newData.child('status').val() == 'em_atendimento' || newData.child('status').val() == 'devolvido') || (auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin' && newData.child('status').val() == 'concluido' && newData.child('conclusao').hasChildren(['descricao','em','uid','autor'])))",
           "mensagem": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 5000"
           },
@@ -127,8 +127,28 @@
           },
           "origemId": {
             ".validate": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin'"
+          },
+          "conclusao": {
+            ".validate": "auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin' && newData.hasChildren(['descricao','em','uid','autor']) && newData.child('descricao').isString() && newData.child('descricao').val().length > 0 && newData.child('descricao').val().length <= 5000 && newData.child('em').isNumber() && newData.child('uid').val() == auth.uid && newData.child('autor').isString()"
+          },
+          ".read": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'user' && (root.child('users').child(auth.uid).child('unitId').val() == $unit || root.child('users').child(auth.uid).child('allUnits').val() == true)) && data.child('responsavelUid').val() == auth.uid",
+          "status": {
+            ".write": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'user' && (root.child('users').child(auth.uid).child('unitId').val() == $unit || root.child('users').child(auth.uid).child('allUnits').val() == true)) && data.parent().child('responsavelUid').val() == auth.uid && data.parent().child('status').val() != 'concluido' && (newData.val() == 'em_atendimento' || newData.val() == 'devolvido')"
+          },
+          "responsavelUid": {
+            ".validate": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin' && newData.isString() && root.child('users').child(newData.val()).child('status').val() == 'approved' && root.child('users').child(newData.val()).child('role').val() == 'user' && (root.child('users').child(newData.val()).child('unitId').val() == $unit || root.child('users').child(newData.val()).child('allUnits').val() == true)) || (newData.val() == data.val() && auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'user' && (root.child('users').child(auth.uid).child('unitId').val() == $unit || root.child('users').child(auth.uid).child('allUnits').val() == true))"
+          },
+          "respostas": {
+            "$resposta": {
+              ".write": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'user' && (root.child('users').child(auth.uid).child('unitId').val() == $unit || root.child('users').child(auth.uid).child('allUnits').val() == true)) && data.parent().parent().child('responsavelUid').val() == auth.uid && data.parent().parent().child('status').val() != 'concluido' && !data.exists() && newData.exists()",
+              ".validate": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin') || (root.child('users').child(auth.uid).child('role').val() == 'user' && newData.hasChildren(['tipo','comentario','uid','autor','em']) && newData.child('uid').val() == auth.uid && newData.child('autor').val() == root.child('users').child(auth.uid).child('fullName').val() && newData.child('em').isNumber() && newData.child('em').val() >= now - 60000 && newData.child('em').val() <= now && newData.child('comentario').isString() && newData.child('comentario').val().length > 0 && newData.child('comentario').val().length <= 5000 && (newData.child('tipo').val() == 'aceitar' || newData.child('tipo').val() == 'recusar' || newData.child('tipo').val() == 'devolver'))"
+            }
           }
-        }
+        },
+        ".indexOn": [
+          "responsavelUid"
+        ],
+        ".read": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'user' && (root.child('users').child(auth.uid).child('unitId').val() == $unit || root.child('users').child(auth.uid).child('allUnits').val() == true)) && query.orderByChild == 'responsavelUid' && query.equalTo == auth.uid"
       }
     }
   }

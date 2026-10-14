@@ -6,9 +6,9 @@ const jpeg=new Uint8Array([255,216,1,255,217]);
 const origin='https://app.example';
 const oldKey='photos/123/foto/00000000-0000-4000-8000-000000000000.jpg';
 const unitKey='units/101/'+oldKey;
-function fixture({unit='101',admin=false,allUnits=false,dedicated='',routes={},reference={storage:'r2',key:oldKey},remoteStatus=201,remoteDescriptor={storage:'r2',key:unitKey,storageUnit:'101',unitId:'101'}}={}) {
+function fixture({unit='101',admin=false,allUnits=false,dedicated='',group='',routes={},reference={storage:'r2',key:oldKey},remoteStatus=201,remoteDescriptor={storage:'r2',key:unitKey,storageUnit:'101',unitId:'101'}}={}) {
  const calls=[];
- const env={ALLOWED_ORIGIN:origin,FIREBASE_DATABASE_URL:'https://db.example',FIREBASE_API_KEY:'key',UNIT_GATEWAYS:JSON.stringify(routes),PHOTO_UNIT_ID:dedicated,
+ const env={ALLOWED_ORIGIN:origin,FIREBASE_DATABASE_URL:'https://db.example',FIREBASE_API_KEY:'key',UNIT_GATEWAYS:JSON.stringify(routes),PHOTO_UNIT_ID:dedicated,PHOTO_UNIT_IDS:group,
  PHOTOS:{put:async(k,b,meta)=>calls.push(['put',k,meta]),get:async k=>{calls.push(['get',k]);return {body:jpeg};},delete:async k=>calls.push(['delete',k])}};
  const fetchImpl=async(input,options)=>{
   const url=String(input);
@@ -42,6 +42,12 @@ test('global access permits another unit upload and revocation restores unit iso
  const granted=fixture({allUnits:true});const response=await granted.send('POST','unit=102');assert.equal(response.status,201);assert.equal((await response.json()).unitId,'102');
  const revoked=fixture({allUnits:false});assert.equal((await revoked.send('POST','unit=102')).status,403);
  const dedicated=fixture({allUnits:true,dedicated:'101'});assert.equal((await dedicated.send('POST','unit=102')).status,403);
+});
+test('one account serves its configured unit group with distinct prefixes and destination references',async()=>{
+ for(const unit of ['102','103','104']){const f=fixture({unit,group:'102,103,104'});const r=await f.send('POST','unit='+unit);assert.equal(r.status,201);const d=await r.json();assert.equal(d.storageUnit,unit);assert.equal(d.unitId,unit);assert.ok(d.key.startsWith('units/'+unit+'/'));}
+ const outside=fixture({admin:true,group:'102,103,104'});assert.equal((await outside.send('POST','unit=105')).status,403);
+ const forged=fixture({unit:'102',group:'102,103,104'});assert.equal((await forged.send('POST','unit=103')).status,403);
+ const old=fixture({dedicated:'102',group:'102,103,104',reference:{storage:'r2',key:unitKey.replace('101','102'),storageUnit:'102'}});assert.equal((await old.send('GET','storage=102&key='+encodeURIComponent(unitKey.replace('101','102')))).status,200);
 });
 test('photos already stored in shared R2 stay there after routing new uploads elsewhere',async()=>{
  const f=fixture({routes:{101:'https://ponte.workers.dev'}});assert.equal((await f.send('GET','key='+encodeURIComponent(oldKey))).status,200);assert.deepEqual(f.calls,[['get',oldKey]]);

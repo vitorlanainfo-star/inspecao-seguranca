@@ -58,18 +58,19 @@ export function createHandler(fetchImpl = fetch) {
                 const actor = await authorize(request, env);
                 // Routes are controlled only by Worker configuration, never client URLs.
                 const routes = gateways(env);
-                const dedicated = env.PHOTO_UNIT_ID || '';
-                if (dedicated && !units.has(dedicated)) throw new HttpError(503, 'Unidade do armazenamento inválida.');
                 const requestedUnit = url.searchParams.get('unit') || actor.unitId;
                 const storageUnit = url.searchParams.get('storage') || 'shared';
+                const configuredUnits = String(env.PHOTO_UNIT_IDS || env.PHOTO_UNIT_ID || '').split(',').map(value => value.trim()).filter(Boolean);
+                if (configuredUnits.some(unit => !units.has(unit))) throw new HttpError(503, 'Unidade do armazenamento inválida.');
+                const dedicated = configuredUnits.length ? (request.method === 'POST' ? requestedUnit : storageUnit) : '';
                 if (request.method === 'POST') {
                     if (requestedUnit && !units.has(requestedUnit)) throw new HttpError(400, 'Unidade inválida.');
                     if (!actor.admin && !actor.allUnits && requestedUnit !== actor.unitId) throw new HttpError(403, 'A foto precisa pertencer à sua unidade.');
-                    if ((dedicated || Object.keys(routes).length) && !requestedUnit) throw new HttpError(400, 'Informe a unidade da foto.');
-                    if (dedicated && requestedUnit !== dedicated) throw new HttpError(403, 'Este serviço atende outra unidade.');
+                    if ((configuredUnits.length || Object.keys(routes).length) && !requestedUnit) throw new HttpError(400, 'Informe a unidade da foto.');
+                    if (configuredUnits.length && !configuredUnits.includes(requestedUnit)) throw new HttpError(403, 'Este serviço atende outras unidades.');
                 } else {
                     if (storageUnit !== 'shared' && !units.has(storageUnit)) throw new HttpError(400, 'Destino de foto inválido.');
-                    if (dedicated && storageUnit !== dedicated) throw new HttpError(400, 'Destino de foto incorreto.');
+                    if (configuredUnits.length && !configuredUnits.includes(storageUnit)) throw new HttpError(400, 'Destino de foto incorreto.');
                 }
                 const destination = request.method === 'POST' ? requestedUnit : storageUnit;
                 const endpoint = !dedicated && destination !== 'shared' ? routes[destination] : null;

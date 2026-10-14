@@ -4,6 +4,10 @@ O Worker principal mantém o endereço atual. Novos uploads levam `unit=<codigo>
 
 ## Destinos independentes
 
+Para compartilhar uma conta entre duas ou três unidades, use um Worker e bucket privados por conta e configure `PHOTO_UNIT_IDS`, por exemplo `102,103,104`. Cada referência mantém seu código de unidade em `storageUnit` e no prefixo da chave, mesmo quando várias unidades usam o mesmo endpoint. No principal, configure os três códigos para esse endpoint. `PHOTO_UNIT_ID` continua compatível com destinos de uma unidade; `PHOTO_UNIT_IDS` prevalece quando presente. A permissão de um usuário continua sendo verificada por unidade, nunca pela conta de armazenamento compartilhada.
+
+Distribuição acordada em cinco contas: original (101,112,113), Mutum (102,103,104), grupo 105 (105,106,107), grupo 108 (108,110,111) e grupo 115 (115,117). Os três códigos da conta original usam o bucket atual; os demais só recebem destinos depois de provisionados e testados. A franquia é compartilhada dentro de cada conta.
+
 Em cada conta Cloudflare destinada a uma unidade, publique `worker.js` com um bucket R2 privado vinculado como `PHOTOS`, as mesmas variáveis Firebase/origem do serviço atual e `PHOTO_UNIT_ID` definido com o código correspondente, por exemplo `101`. O Worker dessa conta não precisa de `UNIT_GATEWAYS`. A implantação e a criação das contas/buckets não são executadas por este commit.
 
 No Worker principal, configure `UNIT_GATEWAYS` como texto JSON. Exemplo ilustrativo (substitua o endereço pelo Worker realmente publicado e testado):

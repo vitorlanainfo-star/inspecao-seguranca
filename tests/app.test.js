@@ -9,7 +9,8 @@ function saveHarness({ failUpload = false, failCommit = false, admin = false, re
     const source = originalModule.slice(originalModule.indexOf('window.fbSalvarOcorrencia ='), originalModule.indexOf('window.fbExcluirOcorrencia ='));
     const calls = [], errors = [];
     const context = {
-        window: { firebasePodeGerenciar: admin }, currentUser: { uid: 'user-1' }, currentProfile: { status: 'approved' },
+        window: { firebasePodeGerenciar: admin }, currentUser: { uid: 'user-1' }, currentProfile: { status: 'approved', unitId: '101' },
+        listaSetoresCadastrados: [{ nome: 'FABRICA', unitId: '101' }],
         camposFoto: ['foto','fotoConclusao'], fotosPendentesMigracao: new Map(), ocorrenciasPorId: new Map(), cacheFotos: new Map(),
         Date, Math, Object, String, db: {}, ref: (_, path) => path || 'root',
         photoStorage: { async upload(id, field, photo) {
@@ -20,8 +21,9 @@ function saveHarness({ failUpload = false, failCommit = false, admin = false, re
         guardarFotoPersistida: async () => { calls.push(['cache']); }, registrarAuditoria: async () => { calls.push(['audit']); },
         console: { error() {} }, alert: message => errors.push(message)
     };
+    vm.runInNewContext(readFileSync(new URL('../units.js', import.meta.url), 'utf8'), context);
     vm.runInNewContext(source, context);
-    return { save: context.window.fbSalvarOcorrencia, calls, context, errors };
+    return { save: item => context.window.fbSalvarOcorrencia({local: 'FABRICA', ...item}), calls, context, errors };
 }
 const photo = 'data:image/jpeg;base64,/9j/2Q==';
 test('record and both photo descriptors committed atomically after uploads; metadata and caching preserved', async () => {

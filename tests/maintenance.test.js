@@ -98,11 +98,11 @@ class Snapshot {
     isNumber() { return typeof this.val()==='number'; }
 }
 function evaluate(rule, previous, next, {role='user', status='approved', uid='u1',field='manutencao'}={}) {
-    const old={users:{u1:{role,status,username:'login-real'}},ocorrencias:{123:previous}};
+    const old={users:{u1:{role,status,username:'login-real',unitId:'101'}},ocorrencias:{123:previous}};
     const updated={...old,ocorrencias:{123:next}};
     return vm.runInNewContext(rule,{auth:uid?{uid}:null,now:1000,root:new Snapshot(old),data:new Snapshot(old,['ocorrencias','123',...(field?[field]:[])]),newData:new Snapshot(updated,['ocorrencias','123',...(field?[field]:[])])});
 }
-const rulesOriginal={...original,responsavelUid:'u1'};
+const rulesOriginal={...original,responsavelUid:'u1',unitId:'101'};
 const rejected={...rulesOriginal,status:'recusado',manutencao:{decisao:'recusada',uid:'u1',usuario:'login-real',em:1000,ultimaRecusa:{uid:'u1',usuario:'login-real',em:1000}}};
 test('rules allow scheduler account to refuse with real login in the same atomic write',()=>{
     assert.equal(evaluate(rules.status['.write'],rulesOriginal,rejected,{field:'status'}),true);

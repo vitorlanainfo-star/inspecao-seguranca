@@ -243,6 +243,7 @@
             window.firebaseUsuarioAtual = user;
             window.firebasePerfilAtual = null;
             window.firebasePodeGerenciar = false;
+            sincronizarInterfaceAdministrativa();
             const botaoAdmin = document.getElementById('botaoAdministracao');
             if (botaoAdmin) { botaoAdmin.hidden = true; botaoAdmin.style.display = 'none'; }
             if (!user) { authUserIdWithAudit = null; mostrarAcesso("Entre com seu usuário e senha ou solicite acesso."); return; }
@@ -269,6 +270,7 @@
                     return;
                 }
                 window.firebasePodeGerenciar = currentProfile.role === "admin";
+                sincronizarInterfaceAdministrativa();
                 const botaoAdministracao = document.getElementById('botaoAdministracao');
                 if (botaoAdministracao) {
                     botaoAdministracao.hidden = !window.firebasePodeGerenciar;
@@ -331,11 +333,13 @@
                 if (window.firebasePodeGerenciar) {
                     remove(ref(db, "config/senhaGestor")).catch(error => console.warn("Senha antiga do gestor não foi removida:", error));
                     stopAdminUsersListener = onValue(ref(db, "users"), snapshot => {
+                        if (currentUser?.uid !== user.uid || !window.firebasePodeGerenciar) return;
                         userProfiles = snapshot.val() || {};
                         if (typeof ocorrencias !== "undefined") ocorrencias.forEach(item => { if (item.status === "aprovado" && !item.responsavelUid) vincularResponsavelLegado(item); });
                         if (typeof window.renderizarCadastrosAcesso === "function") window.renderizarCadastrosAcesso();
                     });
                     stopAdminAuditListener = onValue(ref(db, "audit"), snapshot => {
+                        if (currentUser?.uid !== user.uid || !window.firebasePodeGerenciar) return;
                         if (typeof window.renderizarAuditoriaAcesso === "function") window.renderizarAuditoriaAcesso(snapshot.val() || {});
                     });
                 }
@@ -2461,6 +2465,26 @@
             return `UNIDADE ${unitId} | 📅 ${dataStr} 🕒 ${horaStr}`;
         }
 
+        function rotuloFabrica(nome, unitId = window.unidadeDaFabrica(nome, listaSetoresCadastrados)) {
+            return window.unidadeValida(unitId) ? `${nome} — Unidade ${unitId}` : nome;
+        }
+
+        function sincronizarInterfaceAdministrativa() {
+            const administrador = window.firebasePodeGerenciar === true;
+            const gestor = document.getElementById('aba-gestor');
+            if (gestor) { gestor.hidden = !administrador; gestor.style.display = administrador ? '' : 'none'; }
+            const painel = document.getElementById('painelContasAcesso');
+            if (painel) { painel.hidden = !administrador; painel.style.display = administrador ? '' : 'none'; }
+            if (!administrador) {
+                if (gestor) gestor.classList.remove('active');
+                document.getElementById('aba-usuario')?.classList.add('active');
+                ['listaCadastrosPendentes', 'listaAuditoriaAcesso', 'listaVinculosUnidades'].forEach(id => {
+                    const elemento = document.getElementById(id);
+                    if (elemento) elemento.innerHTML = '';
+                });
+            }
+        }
+
         function solicitarAcessoGestor() {
             if (!window.firebasePodeGerenciar) {
                 alert("Esta área é exclusiva da conta administradora.");
@@ -2755,7 +2779,8 @@
             });
         }
 
-        function adicionarGestor() {
+        async function adicionarGestor() {
+            if (!window.firebasePodeGerenciar) return alert('Somente o administrador pode cadastrar responsáveis.');
             const inputNome = document.getElementById('novoGestorNome');
             const inputFone = document.getElementById('novoGestorFone');
             const nome = inputNome.value.trim().toUpperCase();
@@ -2768,17 +2793,19 @@
                 return;
             }
 
-            let existente = listaGestores.find(g => g.nome === nome);
+            const atualizados = listaGestores.map(g => ({ ...g }));
+            let existente = atualizados.find(g => g.nome === nome);
             if (existente) {
                 if (existente.unitId !== unitId) return alert('Use Vincular unidades para mudar a unidade deste responsável.');
                 existente.fone = fone || existente.fone;
-                alert("Dados do responsável atualizados com sucesso!");
             } else {
-                listaGestores.push({ nome, fone, unitId });
-                alert("Responsável cadastrado com sucesso!");
+                atualizados.push({ nome, fone, unitId });
             }
 
-            window.fbSalvarGestores(listaGestores);
+            try { await window.fbSalvarGestores(atualizados); }
+            catch (error) { return alert('Não foi possível salvar o responsável: ' + error.message); }
+            listaGestores = atualizados;
+            alert(existente ? 'Dados do responsável atualizados com sucesso!' : 'Responsável cadastrado com sucesso!');
             inputNome.value = '';
             inputFone.value = '';
             renderizarTelas();
@@ -2787,6 +2814,7 @@
         window.renderizarCadastrosAcesso = function () {
             const painel = document.getElementById('painelContasAcesso');
             const destino = document.getElementById('listaCadastrosPendentes');
+            sincronizarInterfaceAdministrativa();
             if (!painel || !destino || !window.firebasePodeGerenciar) return;
             const selecoes = new Map([...destino.querySelectorAll('select')].map(s => [s.id, s.value]));
             painel.style.display = 'block';
@@ -2932,7 +2960,8 @@
             window.fbSalvarOcorrencia(item);
         }
 
-        function cadastrarSetor() {
+        async function cadastrarSetor() {
+            if (!window.firebasePodeGerenciar) return alert('Somente o administrador pode cadastrar fábricas.');
             const nomeSetor = document.getElementById('novoSetorNome').value.trim().toUpperCase();
             const respSetor = document.getElementById('novoSetorResponsavel').value;
             const unitId = document.getElementById('novoSetorUnidade').value;
@@ -2947,8 +2976,10 @@
                 alert("Esta fábrica já está cadastrada para este responsável.");
                 return;
             }
-            listaSetoresCadastrados.push({ nome: nomeSetor, responsavel: respSetor, unitId });
-            window.fbSalvarSetores(listaSetoresCadastrados);
+            const atualizados = [...listaSetoresCadastrados, { nome: nomeSetor, responsavel: respSetor, unitId }];
+            try { await window.fbSalvarSetores(atualizados); }
+            catch (error) { return alert('Não foi possível salvar a fábrica: ' + error.message); }
+            listaSetoresCadastrados = atualizados;
             document.getElementById('novoSetorNome').value = '';
             document.getElementById('novoSetorResponsavel').value = '';
             renderizarTelas();
@@ -3558,6 +3589,7 @@
         }
 
         function renderizarTelas() {
+            sincronizarInterfaceAdministrativa();
             const loader = document.getElementById('loadingIndicator');
             if (loader) loader.style.display = 'block';
 
@@ -3583,13 +3615,13 @@
                 if (selectLocalUsuario) {
                     let localUsuarioAtual = selectLocalUsuario.value;
                     let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.filter(s => window.unidadeValida(s.unitId)).map(s => s.nome))];
-                    selectLocalUsuario.innerHTML = '<option value="">Selecione a Fábrica...</option>' + locaisUnicosCadastrados.map(loc => `<option value="${loc}">${loc}</option>`).join('');
+                    selectLocalUsuario.innerHTML = '<option value="">Selecione a Fábrica...</option>' + locaisUnicosCadastrados.map(loc => `<option value="${escaparHtml(loc)}">${escaparHtml(rotuloFabrica(loc))}</option>`).join('');
                     selectLocalUsuario.value = localUsuarioAtual;
                 }
 
                 const tagsSetoresDiv = document.getElementById('tagsSetoresCadastrados');
                 if (tagsSetoresDiv) {
-                    tagsSetoresDiv.innerHTML = listaSetoresCadastrados.map(s => `<span class="chip-setor">📍 ${s.nome} (${s.responsavel}) <button onclick="removerSetor('${s.nome}', '${s.responsavel}')">×</button></span>`).join('');
+                    tagsSetoresDiv.innerHTML = listaSetoresCadastrados.map(s => `<span class="chip-setor">📍 ${escaparHtml(rotuloFabrica(s.nome, s.unitId))} (${escaparHtml(s.responsavel)}) <button onclick="removerSetor('${s.nome}', '${s.responsavel}')">×</button></span>`).join('');
                 }
 
                 const selectPessoa = document.getElementById('filtroGlobalPessoa');
@@ -3603,7 +3635,7 @@
                 if (selectFabricaInc) {
                     let fabricaAtual = selectFabricaInc.value;
                     let locaisUnicosCadastrados = [...new Set(listaSetoresCadastrados.map(s => s.nome))];
-                    selectFabricaInc.innerHTML = '<option value="todos">🏭 Todas as Fábricas</option>' + locaisUnicosCadastrados.map(loc => `<option value="${loc}">${loc}</option>`).join('');
+                    selectFabricaInc.innerHTML = '<option value="todos">🏭 Todas as Fábricas</option>' + locaisUnicosCadastrados.map(loc => `<option value="${escaparHtml(loc)}">${escaparHtml(rotuloFabrica(loc))}</option>`).join('');
                     selectFabricaInc.value = fabricaAtual;
                 }
 

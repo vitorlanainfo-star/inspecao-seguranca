@@ -5,17 +5,17 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const originalModule = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
-function saveHarness({ failUpload = false, failCommit = false, admin = false, remote = true } = {}) {
+function saveHarness({ failUpload = false, failCommit = false, admin = false, remote = true, unitId = '101' } = {}) {
     const source = originalModule.slice(originalModule.indexOf('window.fbSalvarOcorrencia ='), originalModule.indexOf('window.fbExcluirOcorrencia ='));
     const calls = [], errors = [];
     const context = {
-        window: { firebasePodeGerenciar: admin }, currentUser: { uid: 'user-1' }, currentProfile: { status: 'approved', unitId: '101' },
-        listaSetoresCadastrados: [{ nome: 'FABRICA', unitId: '101' }],
+        window: { firebasePodeGerenciar: admin }, currentUser: { uid: 'user-1' }, currentProfile: { status: 'approved', unitId },
+        listaSetoresCadastrados: [{ nome: 'FABRICA', unitId }],
         camposFoto: ['foto','fotoConclusao'], fotosPendentesMigracao: new Map(), ocorrenciasPorId: new Map(), cacheFotos: new Map(),
         Date, Math, Object, String, db: {}, ref: (_, path) => path || 'root',
-        photoStorage: { async upload(id, field, photo) {
-            calls.push(['upload', field]); if (failUpload) throw new Error('Upload falhou');
-            return remote ? { storage: 'r2', key: `photos/${id}/${field}/new.jpg` } : photo;
+        photoStorage: { async upload(id, field, photo, uploadUnit) {
+            calls.push(['upload', field, uploadUnit]); if (failUpload) throw new Error('Upload falhou');
+            return remote ? { storage: 'r2', storageUnit:uploadUnit, key: `photos/${id}/${field}/new.jpg` } : photo;
         } },
         update: async (_, value) => { calls.push(['commit', value]); if (failCommit) throw new Error('Firebase falhou'); },
         guardarFotoPersistida: async () => { calls.push(['cache']); }, registrarAuditoria: async () => { calls.push(['audit']); },
@@ -26,6 +26,17 @@ function saveHarness({ failUpload = false, failCommit = false, admin = false, re
     return { save: item => context.window.fbSalvarOcorrencia({local: 'FABRICA', ...item}), calls, context, errors };
 }
 const photo = 'data:image/jpeg;base64,/9j/2Q==';
+
+test('unit 102 user submits a pending action and photo under its factory unit for administrator approval', async () => {
+    const f = saveHarness({unitId:'102'});
+    assert.equal(await f.save({id:10201,status:'pendente',createdByUid:'user-1',foto:photo}),true);
+    const changes=f.calls.find(x=>x[0]==='commit')[1];
+    assert.equal(changes['ocorrencias/10201'].unitId,'102');
+    assert.equal(changes['ocorrencias/10201'].status,'pendente');
+    assert.equal(changes['ocorrencias/10201'].createdByUid,'user-1');
+    assert.equal(changes['fotos/10201/foto'].storageUnit,'102');
+    assert.equal(f.calls.find(x=>x[0]==='upload')[2],'102');
+});
 test('record and both photo descriptors committed atomically after uploads; metadata and caching preserved', async () => {
     const f = saveHarness({ admin: true });
     const item = { id: 123, ticket: 10, status: 'concluido', desc: 'TESTE', foto: photo, fotoConclusao: photo, customField: 'preserved' };

@@ -286,6 +286,17 @@
             const resposta=push(ref(db,`cipa/${unitId}/${chave}/respostas`));
             await update(ref(db),{[`cipa/${unitId}/${chave}/respostas/${resposta.key}`]:{tipo,comentario:comentario || 'Encaminhamento aceito.',uid:currentUser.uid,autor:currentProfile.fullName,em:serverTimestamp()},[`cipa/${unitId}/${chave}/status`]:tipo==='aceitar'?'em_atendimento':'devolvido'});
         };
+        window.fbRegistrarCipaGestao = async (unitId,chave,texto) => {
+            if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) throw Error('Acesso restrito à gestão.');
+            const comentario=String(texto || '').trim();
+            if (!comentario || comentario.length>5000) throw Error('Escreva a pergunta ou providência em até 5000 caracteres.');
+            const resposta=push(ref(db,`cipa/${unitId}/${chave}/respostas`));
+            const resultado=await runTransaction(ref(db,`cipa/${unitId}/${chave}`),fala=>{
+                if (!fala || fala.status==='concluido') return;
+                return {...fala,respostas:{...(fala.respostas || {}),[resposta.key]:{tipo:'gestao',comentario,uid:currentUser.uid,autor:currentProfile.fullName || currentProfile.username || 'Gestão',em:Date.now()}}};
+            });
+            if (!resultado.committed) throw Error('Comentário já concluído ou convertido. Atualize a página.');
+        };
         window.fbConcluirCipa = async (unitId,chave,texto) => {
             if (!window.firebasePodeGerenciar || !window.unidadeValida(unitId)) throw new Error('Apenas o administrador pode concluir comentários.');
             const descricao=String(texto || '').trim();
@@ -2094,6 +2105,9 @@
                 <h2>Fala CIPA — comentários por unidade</h2>
                 <p>Use o filtro de unidade acima. Os comentários ficam separados das ações; a conversão mantém a unidade e as fotos existentes.</p>
                 <div class="form-card"><label for="acaoParaCipa">Converter uma ação ou lançamento em Fala CIPA</label><select id="acaoParaCipa"></select><button class="btn-primary" onclick="converterAcaoParaCipa(document.getElementById('acaoParaCipa').value)">Converter para Fala CIPA</button></div>
+                <label for="filtroStatusCipa">Exibir comentários</label>
+                <select id="filtroStatusCipa" onchange="renderizarGestorCipa()"><option value="abertos">Em acompanhamento</option><option value="concluidos">Histórico de concluídos</option><option value="todos">Todos</option></select>
+                <p>Responder ou registrar uma providência mantém o comentário aberto. Ao resolver, descreva o que foi feito e marque como concluído. O histórico fica salvo na gestão.</p>
                 <div id="listaGestorCipa"></div>
             </div>
             <div id="sub-aba-recusados" class="gestor-sub-content">
@@ -2902,7 +2916,9 @@
             // Não substituir o formulário enquanto a gestão escolhe fábrica/setor.
             if(destino.contains(document.activeElement)) return;
             const comentarios=Object.entries(window.comentariosCipa||{}).filter(([unit])=>filtro==='todos'||unit===filtro).flatMap(([unit,items])=>Object.entries(items||{}).map(([key,item])=>({unit,key,item}))).sort((a,b)=>a.unit.localeCompare(b.unit)||Number(b.item.criadoEm)-Number(a.item.criadoEm));
-            destino.innerHTML=comentarios.length?comentarios.map(({unit,key,item})=> {
+            const filtroStatus=document.getElementById('filtroStatusCipa')?.value || 'abertos';
+            const visiveis=comentarios.filter(({item})=>filtroStatus==='todos' || (filtroStatus==='concluidos' ? item.status==='concluido' : item.status!=='concluido'));
+            destino.innerHTML=visiveis.length?visiveis.map(({unit,key,item})=> {
                 const original=item.registroOriginal || {};
                 const fabricas=[...new Set(listaSetoresCadastrados.filter(s=>s.unitId===unit).map(s=>s.nome))];
                 const usuarios=Object.entries(window.firebaseUsuarios?.() || {}).filter(([uid,p])=>p.status==='approved' && p.role==='user' && (p.unitId===unit || p.allUnits===true));
@@ -2911,18 +2927,19 @@
                     <details data-cipa-detalhes ${cipaRecolhidos.has(unit+'/'+key)?'':'open'}><summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><strong>${escaparHtml(window.rotuloUnidade(unit))} · ${escaparHtml(nomesStatus[item.status] || item.status)}</strong><span data-cipa-minimizar>${cipaRecolhidos.has(unit+'/'+key)?'➕ Expandir':'➖ Minimizar'}</span></summary><p>${escaparHtml(item.autor||'')} · ${escaparHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}</p>
                     <p><strong>Status: ${escaparHtml(nomesStatus[item.status] || item.status)}</strong></p>
                     <p style="white-space:pre-wrap;overflow-wrap:anywhere">${escaparHtml(item.mensagem||'')}</p>
-                    ${conclusao?`<div class="form-card"><strong>Conclusão — ${escaparHtml(conclusao.autor||'')} · ${escaparHtml(new Date(conclusao.em).toLocaleString('pt-BR'))}</strong><p style="white-space:pre-wrap">${escaparHtml(conclusao.descricao||'')}</p></div>`: '<label>Descrição da conclusão</label><textarea data-cipa-conclusao maxlength="5000" placeholder="Descreva a solução ou o encaminhamento realizado"></textarea><button class="btn-primary" data-cipa-concluir>Concluir comentário</button>'}
+                    ${conclusao?`<div class="form-card"><strong>Conclusão — ${escaparHtml(conclusao.autor||'')} · ${escaparHtml(new Date(conclusao.em).toLocaleString('pt-BR'))}</strong><p style="white-space:pre-wrap">${escaparHtml(conclusao.descricao||'')}</p></div>`: '<label>O que foi feito para resolver?</label><textarea data-cipa-conclusao maxlength="5000" placeholder="Descreva a solução ou o encaminhamento realizado"></textarea><button class="btn-primary" data-cipa-concluir>Marcar como concluído</button>'}
                     ${item.origemId?`<p>Origem: ${escaparHtml(original.ticket||item.origemId)} — ${escaparHtml(original.local||'')} / ${escaparHtml(original.setor||'')}</p>`:''}
                     ${original.temFoto?'<button class="btn-tool" data-cipa-foto="foto">Ver foto antes</button>':''}${original.temFotoConclusao?'<button class="btn-tool" data-cipa-foto="fotoConclusao">Ver foto depois</button>':''}
-                    <label>Fábrica da unidade para converter em ação</label><select data-cipa-fabrica><option value="">Selecione a fábrica…</option>${fabricas.map(nome=>`<option value="${escaparHtml(nome)}" ${nome===original.local?'selected':''}>${escaparHtml(nome)}</option>`).join('')}</select>
-                    <label>Setor</label><input data-cipa-setor value="${escaparHtml(original.setor||'')}" maxlength="200">
                     <p>Responsável: ${escaparHtml(item.responsavel || 'Sem encaminhamento')}</p>
                     <div>${Object.values(item.respostas || {}).sort((a,b)=>a.em-b.em).map(r=>`<p style="white-space:pre-wrap"><strong>${escaparHtml(r.autor)} · ${escaparHtml(r.tipo)} · ${escaparHtml(new Date(r.em).toLocaleString('pt-BR'))}</strong><br>${escaparHtml(r.comentario)}</p>`).join('')}</div>
+                    ${item.status!=='concluido' ? `<label>Registrar pergunta ou providência da gestão</label><textarea data-cipa-gestao maxlength="5000" placeholder="Registre o acompanhamento sem concluir o comentário"></textarea><button class="btn-primary" data-cipa-registrar>Salvar acompanhamento</button>` : ''}
+                    ${item.status!=='concluido' ? `<label>Fábrica da unidade para converter em ação</label><select data-cipa-fabrica><option value="">Selecione a fábrica…</option>${fabricas.map(nome=>`<option value="${escaparHtml(nome)}" ${nome===original.local?'selected':''}>${escaparHtml(nome)}</option>`).join('')}</select>
+                    <label>Setor</label><input data-cipa-setor value="${escaparHtml(original.setor||'')}" maxlength="200">
                     <label>Encaminhar para usuário (opcional)</label><select data-cipa-responsavel><option value="">Definir responsável na aprovação…</option>${usuarios.map(([uid,p])=>`<option value="${escaparHtml(uid)}" ${uid===original.responsavelUid?'selected':''}>${escaparHtml(p.fullName)} · @${escaparHtml(p.username)}</option>`).join('')}</select>
                     ${item.status!=='concluido'?'<button class="btn-primary" data-cipa-encaminhar>Encaminhar comentário ao usuário sem converter</button>':''}
-                    <button class="btn-primary" data-cipa-converter>Converter em ação para aprovação</button>
+                    <button class="btn-primary" data-cipa-converter>Converter em ação para aprovação</button>` : ''}
                     <p data-cipa-status role="status"></p></details></div>`;
-            }).join(''):'<p>Nenhum comentário CIPA nesta unidade.</p>';
+            }).join(''):'<p>Nenhum comentário CIPA nesta seleção. Consulte o histórico para ver os concluídos.</p>';
             destino.querySelectorAll('[data-cipa-detalhes]').forEach(details=>details.ontoggle=()=>{
                 const card=details.closest('[data-cipa-chave]'), chave=card.dataset.cipaUnidade+'/'+card.dataset.cipaChave;
                 if(details.open)cipaRecolhidos.delete(chave);else cipaRecolhidos.add(chave);
@@ -2940,11 +2957,17 @@
                 try {await window.fbEncaminharCipa(card.dataset.cipaUnidade,card.dataset.cipaChave,card.querySelector('[data-cipa-responsavel]').value);document.activeElement?.blur();renderizarGestorCipa();alert('Comentário encaminhado. O usuário pode aceitar, recusar e devolver com comentário.');}
                 catch(error){card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
             });
+            destino.querySelectorAll('[data-cipa-registrar]').forEach(btn=>btn.onclick=async()=>{
+                const card=btn.closest('[data-cipa-chave]'), texto=card.querySelector('[data-cipa-gestao]').value;
+                btn.disabled=true;
+                try {await window.fbRegistrarCipaGestao(card.dataset.cipaUnidade,card.dataset.cipaChave,texto);document.activeElement?.blur();renderizarGestorCipa();alert('Acompanhamento salvo. O comentário continua aberto.');}
+                catch(error){card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
+            });
             destino.querySelectorAll('[data-cipa-concluir]').forEach(btn=>btn.onclick=async()=>{
                 const card=btn.closest('[data-cipa-chave]'), texto=card.querySelector('[data-cipa-conclusao]').value;
                 if(!texto.trim()) {card.querySelector('[data-cipa-status]').textContent='Descreva a conclusão.';return;}
                 btn.disabled=true;
-                try {await window.fbConcluirCipa(card.dataset.cipaUnidade,card.dataset.cipaChave,texto);document.activeElement?.blur();renderizarGestorCipa();alert('Comentário concluído.');}
+                try {await window.fbConcluirCipa(card.dataset.cipaUnidade,card.dataset.cipaChave,texto);document.activeElement?.blur();renderizarGestorCipa();alert('Comentário concluído e salvo no Histórico de concluídos da gestão.');}
                 catch(error) {card.querySelector('[data-cipa-status]').textContent=error.message;btn.disabled=false;}
             });
             destino.querySelectorAll('[data-cipa-foto]').forEach(btn=>btn.onclick=async()=>{
@@ -2958,7 +2981,7 @@
             const el=document.getElementById('cipaRecebidos');if(!el)return;
             if(window.firebasePerfilAtual?.role!=='user'){el.hidden=true;el.replaceChildren();return;}
             if(el.contains(document.activeElement))return;
-            const itens=Object.entries(window.encaminhamentosCipa || {}).flatMap(([unit,items])=>Object.entries(items).map(([key,item])=>({unit,key,item}))).filter(({item})=>item.responsavelUid===window.firebaseUsuarioAtual?.uid);
+            const itens=Object.entries(window.encaminhamentosCipa || {}).flatMap(([unit,items])=>Object.entries(items).map(([key,item])=>({unit,key,item}))).filter(({item})=>item.responsavelUid===window.firebaseUsuarioAtual?.uid && item.status!=='concluido');
             el.hidden=!itens.length;
             el.innerHTML=itens.length?'<h2>Comentários encaminhados pela gestão</h2>'+itens.map(({unit,key,item})=>`<div class="occurrence-card" data-recebido-unit="${escaparHtml(unit)}" data-recebido-key="${escaparHtml(key)}"><h3>${escaparHtml(window.rotuloUnidade(unit))} · ${escaparHtml(item.status)}</h3><p style="white-space:pre-wrap">${escaparHtml(item.mensagem)}</p>${Object.values(item.respostas || {}).sort((a,b)=>a.em-b.em).map(r=>`<p><strong>${escaparHtml(r.autor)} · ${escaparHtml(r.tipo)}</strong>: ${escaparHtml(r.comentario)}</p>`).join('')}${item.status==='concluido'?`<p>Concluído: ${escaparHtml(item.conclusao?.descricao || '')}</p>`:'<label>Comentário para a gestão</label><textarea data-recebido-comentario maxlength="5000"></textarea><button class="btn-primary" data-recebido-tipo="aceitar">Aceitar</button><button class="btn-tool" data-recebido-tipo="recusar">Recusar e devolver</button><button class="btn-tool" data-recebido-tipo="devolver">Enviar comentário e devolver à gestão</button>'}<p data-recebido-status role="status"></p></div>`).join(''):'';
             el.querySelectorAll('[data-recebido-tipo]').forEach(btn=>btn.onclick=async()=>{

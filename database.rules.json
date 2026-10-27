@@ -23,6 +23,9 @@
         "unitId": {
           ".validate": "newData.isString() && (newData.val() == '101' || newData.val() == '102' || newData.val() == '103' || newData.val() == '104' || newData.val() == '105' || newData.val() == '106' || newData.val() == '107' || newData.val() == '108' || newData.val() == '110' || newData.val() == '111' || newData.val() == '112' || newData.val() == '113' || newData.val() == '115' || newData.val() == '117')"
         },
+        "falaCipa": {
+          ".validate": "newData.val() == false || newData.val() == true && auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'"
+        },
         "allUnits": {
           ".validate": "(newData.val() == false || newData.val() == true) && (newData.val() == false || (auth != null && root.child('users').child(auth.uid).child('role').val() == 'admin' && root.child('users').child(auth.uid).child('status').val() == 'approved'))"
         }
@@ -108,7 +111,7 @@
       "$unit": {
         ".validate": "($unit == '101' || $unit == '102' || $unit == '103' || $unit == '104' || $unit == '105' || $unit == '106' || $unit == '107' || $unit == '108' || $unit == '110' || $unit == '111' || $unit == '112' || $unit == '113' || $unit == '115' || $unit == '117')",
         "$message": {
-          ".write": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin') || (auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'cipa' && root.child('users').child(auth.uid).child('unitId').val() == $unit && !data.exists() && newData.exists() && newData.child('autorUid').val() == auth.uid && newData.child('unitId').val() == $unit && newData.child('status').val() == 'novo' && !newData.child('registroOriginal').exists() && !newData.child('origemId').exists())",
+          ".write": "(auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin') || (auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && (root.child('users').child(auth.uid).child('role').val() == 'cipa' || root.child('users').child(auth.uid).child('role').val() == 'user' && root.child('users').child(auth.uid).child('falaCipa').val() == true) && root.child('users').child(auth.uid).child('unitId').val() == $unit && !data.exists() && newData.exists() && newData.child('autorUid').val() == auth.uid && newData.child('unitId').val() == $unit && newData.child('status').val() == 'novo' && !newData.child('registroOriginal').exists() && !newData.child('origemId').exists())",
           ".validate": "newData.hasChildren(['mensagem','unitId','autorUid','autor','criadoEm','status']) && newData.child('unitId').val() == $unit && newData.child('mensagem').isString() && newData.child('mensagem').val().length > 0 && newData.child('mensagem').val().length <= 5000 && newData.child('criadoEm').isNumber() && ((newData.child('status').val() == 'novo' || newData.child('status').val() == 'encaminhado' || newData.child('status').val() == 'em_atendimento' || newData.child('status').val() == 'devolvido') || (auth != null && root.child('users').child(auth.uid).child('status').val() == 'approved' && root.child('users').child(auth.uid).child('role').val() == 'admin' && newData.child('status').val() == 'concluido' && newData.child('conclusao').hasChildren(['descricao','em','uid','autor'])))",
           "mensagem": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 5000"

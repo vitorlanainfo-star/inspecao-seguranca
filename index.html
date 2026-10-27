@@ -213,7 +213,7 @@
 
         window.fbDefinirAcessoTodasUnidades = async function(uid, allUnits) {
             if (!window.firebasePodeGerenciar) return alert('Apenas o administrador pode alterar acessos.');
-            if (userProfiles[uid]?.role === 'cipa') return alert('Contas CIPA ficam limitadas à unidade cadastrada.');
+            if (userProfiles[uid]?.role === 'cipa' || userProfiles[uid]?.falaCipa === true) return alert('Contas CIPA ficam limitadas à unidade cadastrada.');
             try {
                 await update(ref(db, 'users/' + uid), { allUnits: allUnits === true });
                 await registrarAuditoria('unidade', 'Conta ' + uid + ': acesso a todas as unidades ' + (allUnits ? 'concedido' : 'revogado'));
@@ -221,17 +221,21 @@
         };
 
         window.fbDefinirPerfilConta = async (uid, role) => {
-            if (!window.firebasePodeGerenciar || !['user','cipa'].includes(role) || !userProfiles[uid] || userProfiles[uid].role === 'admin') return;
+            if (!window.firebasePodeGerenciar || !['user','cipa','cipa_inspecoes'].includes(role) || !userProfiles[uid] || userProfiles[uid].role === 'admin') return;
             const unitId = document.getElementById('unidade-conta-' + uid)?.value || userProfiles[uid].unitId;
             if (!window.unidadeValida(unitId)) return alert('Selecione uma unidade para a conta.');
-            try { await update(ref(db, `users/${uid}`), {role,unitId,...(role === 'cipa' ? {allUnits:false} : {})}); await registrarAuditoria('perfil', `Conta ${uid}: ${role} / ${unitId}`); }
+            const falaCipa = role === 'cipa_inspecoes';
+            const perfilDestino = falaCipa ? 'user' : role;
+            try { await update(ref(db, `users/${uid}`), {role:perfilDestino,falaCipa,unitId,...(role === 'cipa' || falaCipa ? {allUnits:false} : {})}); await registrarAuditoria('perfil', `Conta ${uid}: ${role} / ${unitId}`); }
             catch(error) { alert('Não foi possível alterar o perfil: ' + error.message); }
         };
         window.fbEnviarCipa = async mensagem => {
-            if (currentProfile?.role !== 'cipa' || currentProfile.status !== 'approved' || !window.unidadeValida(currentProfile.unitId)) throw new Error('Entre com uma conta CIPA vinculada à sua unidade.');
+            if (!currentUser || !currentProfile || (currentProfile.role !== 'cipa' && !(currentProfile.role === 'user' && currentProfile.falaCipa === true)) || currentProfile.status !== 'approved' || !window.unidadeValida(currentProfile.unitId)) throw new Error('Entre com uma conta CIPA vinculada à sua unidade.');
+            mensagem = String(mensagem || '').trim();
+            if (!mensagem || mensagem.length > 5000) throw new Error('Escreva a denúncia em até 5000 caracteres.');
             const uid = currentUser.uid, unitId = currentProfile.unitId;
             const destino = push(ref(db, `cipa/${unitId}`));
-            await set(destino, {mensagem,unitId,autorUid:uid,autor:currentProfile.fullName,criadoEm:serverTimestamp(),status:'novo'});
+            await set(destino, {mensagem,unitId,autorUid:uid,autor:currentProfile.fullName,identificacaoCipa:'CIPA ' + unitId,criadoEm:serverTimestamp(),status:'novo'});
             return destino.key;
         };
         window.fbConverterParaCipa = async id => {
@@ -388,7 +392,7 @@
                 document.getElementById("authGate").style.display = "none";
                 iniciarListenersDadosAprovados();
                 const badge = document.getElementById("contaAtual");
-                if (badge) badge.textContent = `${currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : currentProfile.allUnits === true ? "Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
+                if (badge) badge.textContent = `${currentProfile.role === 'cipa' || currentProfile.falaCipa === true ? 'CIPA ' + currentProfile.unitId : currentProfile.fullName} (${currentProfile.role === "admin" ? "Administrador • Todas as unidades" : currentProfile.allUnits === true ? "Todas as unidades" : window.rotuloUnidade(currentProfile.unitId)})`;
                 const unidadeCabecalho = document.getElementById('unidadeCabecalho');
                 if (unidadeCabecalho) unidadeCabecalho.textContent = window.firebasePodeGerenciar || currentProfile.allUnits === true ? 'Todas as unidades' : window.rotuloUnidade(currentProfile.unitId);
                 const nomeRegistro = document.getElementById("nomeUsuario");
@@ -2012,12 +2016,14 @@
                 <div id="corpoFormularioLancar" style="margin-top: 14px;">
                     <div class="form-group">
                         <label for="tipoOcorrencia">Tipo de Ocorrência:</label>
-                        <select id="tipoOcorrencia" style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; background:white; font-size: 0.9rem;">
+                        <select id="tipoOcorrencia" onchange="sincronizarTipoOcorrencia()" style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; background:white; font-size: 0.9rem;">
                             <option value="Condicao Insegura">Condição Insegura</option>
                             <option value="Incidente">Incidente</option>
+                            <option id="opcaoTipoFalaCipa" value="Fala CIPA" hidden disabled>Fala CIPA</option>
                         </select>
                     </div>
 
+                    <div id="camposRegistroInspecao">
                     <div class="lancamento-identificacao">
                         <div class="form-group" style="margin-bottom:0;">
                             <label for="nomeUsuario">Seu nome de registro:</label>
@@ -2044,6 +2050,13 @@
                         <label for="fotoUsuario">Foto da Condição (Câmara ou Galeria):</label>
                         <input type="file" id="fotoUsuario" accept="image/*" capture="environment" style="font-size: 0.85rem;" onchange="comprimirFotoInput(event, function(base64){ fotoTempBase64 = base64; })">
                         <small id="statusFotoUsuario" style="display:block; margin-top:5px; color:var(--text-muted);" aria-live="polite"></small>
+                    </div>
+                    </div>
+                    <div id="camposDenunciaCipa" hidden>
+                        <p id="identificacaoDenunciaCipa"></p>
+                        <label for="denunciaCipaUsuario">Sua denúncia</label>
+                        <textarea id="denunciaCipaUsuario" maxlength="5000" rows="7" placeholder="Descreva sua denúncia para a gestão da sua unidade." style="width:100%;box-sizing:border-box;"></textarea>
+                        <p id="statusDenunciaCipaUsuario" role="status" aria-live="polite"></p>
                     </div>
                     <button class="btn-primary" id="btnEnviarRegistro" onclick="usuarioReportar()">Enviar Registro</button>
                 </div>
@@ -2656,6 +2669,7 @@
         }
 
         function sincronizarInterfaceAdministrativa() {
+            sincronizarTipoOcorrencia();
             const administrador = window.firebasePodeGerenciar === true;
             const cipa = window.firebasePerfilAtual?.role === 'cipa' && window.firebasePerfilAtual?.status === 'approved';
             const painelCipa = document.getElementById('aba-cipa');
@@ -2686,6 +2700,48 @@
                     const campo = document.getElementById(id);
                     if (campo) campo.value = 'todos';
                 });
+            }
+        }
+
+        function sincronizarTipoOcorrencia() {
+            const seletor = document.getElementById('tipoOcorrencia');
+            const opcao = document.getElementById('opcaoTipoFalaCipa');
+            if (!seletor || !opcao) return;
+            const perfil = window.firebasePerfilAtual;
+            const permitido = perfil?.status === 'approved' && perfil.role === 'user' && perfil.falaCipa === true && window.unidadeValida(perfil.unitId);
+            opcao.hidden = !permitido;
+            opcao.disabled = !permitido;
+            if (!permitido && seletor.value === 'Fala CIPA') seletor.value = 'Condicao Insegura';
+            const denuncia = permitido && seletor.value === 'Fala CIPA';
+            document.getElementById('camposRegistroInspecao').hidden = denuncia;
+            document.getElementById('camposDenunciaCipa').hidden = !denuncia;
+            const identificacao = document.getElementById('identificacaoDenunciaCipa');
+            identificacao.textContent = permitido ? 'CIPA ' + perfil.unitId + ' — ' + window.rotuloUnidade(perfil.unitId) : '';
+            const botao = document.getElementById('btnEnviarRegistro');
+            if (!botao.disabled) botao.textContent = denuncia ? 'Enviar denúncia à gestão' : 'Enviar Registro';
+        }
+
+        async function enviarDenunciaCipaUsuario() {
+            const perfil = window.firebasePerfilAtual;
+            if (perfil?.role !== 'user' || perfil.status !== 'approved' || perfil.falaCipa !== true) return alert('Este envio é exclusivo do perfil CIPA.');
+            const texto = document.getElementById('denunciaCipaUsuario');
+            const status = document.getElementById('statusDenunciaCipaUsuario');
+            const botao = document.getElementById('btnEnviarRegistro');
+            if (botao.disabled) return;
+            const mensagem = texto.value.trim();
+            if (!mensagem || mensagem.length > 5000) { status.textContent = 'Escreva sua denúncia em até 5000 caracteres.'; return; }
+            botao.disabled = true;
+            botao.textContent = 'Enviando denúncia…';
+            status.textContent = '';
+            try {
+                const protocolo = await window.fbEnviarCipa(mensagem);
+                texto.value = '';
+                status.textContent = 'Denúncia enviada ao Fala CIPA da gestão da unidade ' + perfil.unitId + '. Protocolo: ' + protocolo;
+            } catch (error) {
+                status.textContent = 'Não foi possível enviar. A denúncia foi mantida para tentar novamente. ' + error.message;
+            } finally {
+                botao.disabled = false;
+                sincronizarTipoOcorrencia();
             }
         }
 
@@ -2924,7 +2980,7 @@
                 const usuarios=Object.entries(window.firebaseUsuarios?.() || {}).filter(([uid,p])=>p.status==='approved' && p.role==='user' && (p.unitId===unit || p.allUnits===true));
                 const conclusao=item.conclusao; const nomesStatus={novo:'Pendente',encaminhado:'Encaminhado',em_atendimento:'Aceito — em atendimento',devolvido:'Devolvido à gestão',concluido:'Concluído'};
                 return `<div class="occurrence-card" data-cipa-unidade="${escaparHtml(unit)}" data-cipa-chave="${escaparHtml(key)}">
-                    <details data-cipa-detalhes ${cipaRecolhidos.has(unit+'/'+key)?'':'open'}><summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><strong>${escaparHtml(window.rotuloUnidade(unit))} · ${escaparHtml(nomesStatus[item.status] || item.status)}</strong><span data-cipa-minimizar>${cipaRecolhidos.has(unit+'/'+key)?'➕ Expandir':'➖ Minimizar'}</span></summary><p>${escaparHtml(item.autor||'')} · ${escaparHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}</p>
+                    <details data-cipa-detalhes ${cipaRecolhidos.has(unit+'/'+key)?'':'open'}><summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><strong>${escaparHtml(window.rotuloUnidade(unit))} · ${escaparHtml(nomesStatus[item.status] || item.status)}</strong><span data-cipa-minimizar>${cipaRecolhidos.has(unit+'/'+key)?'➕ Expandir':'➖ Minimizar'}</span></summary><p>${escaparHtml(item.identificacaoCipa || item.autor || '')} · ${escaparHtml(new Date(item.criadoEm).toLocaleString('pt-BR'))}</p>
                     <p><strong>Status: ${escaparHtml(nomesStatus[item.status] || item.status)}</strong></p>
                     <p style="white-space:pre-wrap;overflow-wrap:anywhere">${escaparHtml(item.mensagem||'')}</p>
                     ${conclusao?`<div class="form-card"><strong>Conclusão — ${escaparHtml(conclusao.autor||'')} · ${escaparHtml(new Date(conclusao.em).toLocaleString('pt-BR'))}</strong><p style="white-space:pre-wrap">${escaparHtml(conclusao.descricao||'')}</p></div>`: '<label>O que foi feito para resolver?</label><textarea data-cipa-conclusao maxlength="5000" placeholder="Descreva a solução ou o encaminhamento realizado"></textarea><button class="btn-primary" data-cipa-concluir>Marcar como concluído</button>'}
@@ -3209,7 +3265,7 @@
                 <div style="font-weight:700;margin:14px 0 6px;">Contas aprovadas</div>
                 ${aprovadas.length ? aprovadas.map(([uid, p]) => `
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin:6px 0;">
-                        <span><strong>${escaparHtml(p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button><label style="display:block">Perfil de acesso <select aria-label="Perfil da conta" onchange="fbDefinirPerfilConta('${uid}', this.value)"><option value="user" ${p.role === 'user' ? 'selected' : ''}>Usuário de inspeções</option><option value="cipa" ${p.role === 'cipa' ? 'selected' : ''}>CIPA — somente Fala CIPA</option></select></label><label style="display:block"><input type="checkbox" ${p.allUnits === true ? 'checked' : ''} ${p.role === 'cipa' ? 'disabled' : ''} onchange="fbDefinirAcessoTodasUnidades('${uid}', this.checked)"> Acesso a todas as unidades (inspeções)</label></span>
+                        <span><strong>${escaparHtml(p.role === 'cipa' || p.falaCipa === true ? 'CIPA ' + p.unitId : p.fullName || '')}</strong> · @${escaparHtml(p.username || '')}<select id="unidade-conta-${uid}" aria-label="Unidade da conta">${window.opcoesUnidades(p.unitId)}</select><button class="btn-primary" onclick="fbVincularContaUnidade('${uid}', document.getElementById('unidade-conta-${uid}').value)">Salvar unidade</button><label style="display:block">Perfil de acesso <select aria-label="Perfil da conta" onchange="fbDefinirPerfilConta('${uid}', this.value)"><option value="user" ${p.role === 'user' && p.falaCipa !== true ? 'selected' : ''}>Usuário de inspeções</option><option value="cipa_inspecoes" ${p.role === 'user' && p.falaCipa === true ? 'selected' : ''}>CIPA — inspeções e Fala CIPA</option><option value="cipa" ${p.role === 'cipa' ? 'selected' : ''}>CIPA — somente Fala CIPA</option></select></label><label style="display:block"><input type="checkbox" ${p.allUnits === true ? 'checked' : ''} ${p.role === 'cipa' || p.falaCipa === true ? 'disabled' : ''} onchange="fbDefinirAcessoTodasUnidades('${uid}', this.checked)"> Acesso a todas as unidades (inspeções)</label></span>
                         <button class="btn-tool delete" onclick="removerContaAprovada('${uid}')">🗑️ Remover conta</button>
                     </div>`).join('') : '<p style="font-size:.8rem;color:var(--text-muted);">Nenhuma conta aprovada para remoção.</p>'}`;
             destino.querySelectorAll('select').forEach(s => { if (selecoes.has(s.id)) s.value = selecoes.get(s.id); });
@@ -3420,6 +3476,7 @@
         }
 
         function usuarioReportar() {
+            if (document.getElementById('tipoOcorrencia').value === 'Fala CIPA') return enviarDenunciaCipaUsuario();
             if (fotosEmProcessamento > 0) {
                 alert('Aguarde a foto terminar de ser preparada antes de enviar.');
                 return;
